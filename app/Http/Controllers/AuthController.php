@@ -36,6 +36,32 @@ class AuthController extends Controller
             FOREIGN KEY(user_id) REFERENCES users(id))'
         );
 
+        //create two_factor table if it does not exist
+        $db->exec(
+            'CREATE TABLE IF NOT EXISTS two_factor (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            two_factor_code TEXT,
+            method TEXT DEFAULT "mobile",
+            valid_until DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id))'
+        );
+
+        //create user number of failed attempts table if it does not exist
+        $db->exec(
+            'CREATE TABLE IF NOT EXISTS user_failed_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            number_of_attempts INTEGER DEFAULT 0,
+            temporary_lockout_status boolean DEFAULT false,
+            temporary_lockout_until DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id))'
+        );
+
         //add the user to the db if it does not exist
         $query = $db->prepare('SELECT * FROM users WHERE username = ?');
 
@@ -174,6 +200,9 @@ class AuthController extends Controller
             $consent = 'true';
             $get_user_from_login_cookie['consent'] = $consent;
 
+            //create 2fa code and send it to the user
+            $this->send_2fa_code($get_user_from_login_cookie['id']);
+
             //send the user to the consent page with the cookie
             return redirect('/api/auth/2fa')
                 ->cookie('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true)
@@ -247,6 +276,13 @@ class AuthController extends Controller
                     ->withInput();
             }
 
+            if (!$this->verify_2fa($request)) {
+                return redirect('/api/auth/2fa')
+                    ->with('error', '2FA failed, Please try again')
+                    ->withInput();
+                // Cookie::queue(Cookie::forget('login_cookie'));
+            }
+
             $two_factor = 'true';
             $get_user_from_login_cookie['two_fa'] = $two_factor;
             $id = $get_user_from_login_cookie['id'];
@@ -258,7 +294,6 @@ class AuthController extends Controller
                 ->cookie('user_session', $session_id, $this->cookie_ttl, '/api', null, false, true)
                 ->with('success', 'Successfully logged in');
         } catch (\Exception $e) {
-            Log::info(['CredentialsSTF' => $e->getMessage()]);
 
             Cookie::queue(Cookie::forget('login_cookie'));
 
@@ -272,6 +307,9 @@ class AuthController extends Controller
     {
         //get the user from the session id
         $user = $this->get_user($request);
+
+        Log::info(['USER HOME' => $user]);
+
         try {
             //show the home page with the user
             return view('home', ['user' => $user]);
@@ -291,8 +329,6 @@ class AuthController extends Controller
         }
 
         $user = json_decode($login_cookie, true);
-
-        Log::info(['Credentials GUFLC' => $user]);
 
         if (!$user) {
             return [];
@@ -418,9 +454,9 @@ class AuthController extends Controller
         $now_time = date('Y-m-d H:i:s');
 
         //and session_expiry >
-        $query = $db->prepare('SELECT * FROM sessions WHERE session_id = ? AND valid_until > ?');
+        $query = $db->prepare('SELECT * FROM sessions WHERE session_id = ?');
 
-        $query->execute([$session_id, $now_time]);
+        $query->execute([$session_id]);
 
         $session = $query->fetch(\PDO::FETCH_ASSOC);
 
@@ -475,6 +511,168 @@ class AuthController extends Controller
             return response()->json(['message' => 'User not found, Therefore unauthorized'], 401);
         }
 
+        //send the verification email
+        $this->send_2fa_code($user['id']);
+
         return response()->json(['message' => 'Verification email sent successfully'], 200);
+    }
+
+    //send 2fa code after creating it
+    private function send_2fa_code($user_id)
+    {
+        //get the user from the db
+        $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
+
+        $query = $db->prepare('SELECT * FROM users WHERE id = ?');
+
+        $query->execute([$user_id]);
+
+        $user = $query->fetch(\PDO::FETCH_ASSOC);
+
+        if (!$user) {
+            return false;
+        }
+
+        //generate the 2fa code which is a random 6 digit number
+        $two_factor_code = rand(100000, 999999);
+
+        //create the two factor code in the db
+        $valid_until = date('Y-m-d H:i:s', time() + 60 * 5); //5 minutes
+
+        $query = $db->prepare('INSERT INTO two_factor (user_id, two_factor_code, valid_until) VALUES (?, ?, ?)');
+        $query->execute([$user_id, $two_factor_code, $valid_until]);
+
+        //TODO send the 2fa code to the user
+        Log::info(['TwoFA Code' => $two_factor_code]);
+
+        return true;
+    }
+
+    //verify 2fa code
+    private function verify_2fa(Request $request)
+    {
+        Log::info("=======================TWO FACTOR VERIFICATION=======================");
+
+        Log::info(['REQUEST' => $request->all()]);
+        try {
+            //get the user from cookie
+            $user = $this->get_user_from_login_cookie($request);
+
+            Log::info(['USER FROM COOKIE' => $user]);
+
+            if (!$user) {
+                return false;
+            }
+
+            //get the two factor code from the request
+            $two_factor_code = $request->code;
+
+            //get the two factor code from the db
+            $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
+
+            $query = $db->prepare('SELECT * FROM two_factor WHERE user_id = ? AND two_factor_code = ?');
+
+            $query->execute([$user['id'], $two_factor_code]);
+
+            $two_factor = $query->fetch(\PDO::FETCH_ASSOC);
+
+
+            //check if the two factor code is expired
+            $now_time = date('Y-m-d H:i:s');
+
+            if ($two_factor['valid_until'] < $now_time) {
+                return false;
+            }
+
+            if (!$two_factor) {
+
+                //Increment the number of failed attempts
+                $query = $db->prepare('SELECT * FROM user_failed_attempts WHERE user_id = ?');
+
+                $query->execute([$user['id']]);
+
+                $user_failed_attempts = $query->fetch(\PDO::FETCH_ASSOC);
+
+
+                if (!$user_failed_attempts) {
+                    //create the user failed attempts
+                    $query = $db->prepare('INSERT INTO user_failed_attempts (user_id, number_of_attempts) VALUES (?, ?)');
+
+                    $query->execute([$user['id'], 1]);
+                } else {
+                    //increment the number of attempts
+                    $query = $db->prepare('UPDATE user_failed_attempts SET number_of_attempts = ? WHERE user_id = ?');
+
+                    $query->execute([$user_failed_attempts['number_of_attempts'] + 1, $user['id']]);
+                }
+
+
+                //check if the number of attempts is greater than 3
+                if ($user_failed_attempts['number_of_attempts'] >= 3) {
+                    //lock the user out for 5 minutes
+                    $query = $db->prepare('UPDATE user_failed_attempts SET temporary_lockout_status = ?, temporary_lockout_until = ? WHERE user_id = ?');
+                    $query->execute(['true', date('Y-m-d H:i:s', time() + 60 * 5), $user['id']]);
+                }
+
+                return false;
+            }
+
+
+            //reset the number of failed attempts
+            $query = $db->prepare('UPDATE user_failed_attempts SET number_of_attempts = ? WHERE user_id = ?');
+            $query->execute([0, $user['id']]);
+
+
+
+            //check if the two factor code is expired
+            $now_time = date('Y-m-d H:i:s');
+
+            if ($two_factor['valid_until'] < $now_time) {
+                return false;
+            }
+
+            //update the user two factor column to true
+            $query = $db->prepare('UPDATE users SET two_factor = ? WHERE id = ?');
+
+            $query->execute(['true', $user['id']]);
+
+            //delete the two factor code from the db
+            $query = $db->prepare('DELETE FROM two_factor WHERE user_id = ?');
+
+            $query->execute([$user['id']]);
+
+            //send the user to the home page
+            return true;
+        } catch (\Exception $e) {
+            Log::info(['' => $e->getMessage()]);
+
+            return false;
+        }
+    }
+
+
+
+
+
+
+    //logout the user and delete the session from the db
+    public function logout(Request $request)
+    {
+
+        //get the user from the session id
+        $user = $this->get_user($request);
+
+        Log::info(['USER LOGOUT' => $user]);
+
+        //delete the session from the browser
+        $this->delete_session($request->cookie('user_session'));
+
+        //remove the session from browser
+        Cookie::queue(Cookie::forget('user_session'));
+
+
+        return redirect('/api/home')
+            ->withCookie(Cookie::forget('user_session'))
+            ->with('success', 'Successfully logged out');
     }
 }

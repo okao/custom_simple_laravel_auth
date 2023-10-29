@@ -7,9 +7,28 @@
             <div class="flex justify-center">
                 <img class="h-36 w-36" src="https://d1csarkz8obe9u.cloudfront.net/posterpreviews/company-logo-design-template-e089327a5c476ce5c70c74f7359c5898_screen.jpg?ts=1672291305" alt="Logo">
             </div>
+
+            {{-- error and succsss session messages --}}
+            @if (session('error'))
+                <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative my-4" role="alert">
+                    <strong class="font-bold">Error!</strong>
+                    <span class="block sm:inline">{{ session('error') }}</span>
+                </div>
+            @endif
+
+            @if (session('success'))
+                <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative my-4" role="alert">
+                    <strong class="font-bold">Success!</strong>
+                    <span class="block sm:inline">{{ session('success') }}</span>
+                </div>
+            @endif
+
             <form class="mt-8" method="POST" action="{{ route('submit_2fa') }}">
                 @csrf
                 <div>
+                    <div class="flex justify-center">
+                        <h1 class="text-gray-700 font-bold text-2xl">Two Factor Authentication</h1>
+                    </div>
                     <label class="block text-gray-700 font-bold mb-2" for="code">
                         Code
                     </label>
@@ -42,7 +61,7 @@
 
 
                                     function loop_event () {
-                                        var timeleft = 5;
+                                        var timeleft = 15;
                                         var downloadTimer = setInterval(function(){
                                         if(timeleft <= 0){
                                             clearInterval(downloadTimer);

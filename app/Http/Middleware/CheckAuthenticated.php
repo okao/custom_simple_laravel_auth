@@ -23,12 +23,11 @@ class CheckAuthenticated
         $get_user = $this->get_user($request);
 
         try {
-            Log::info('get_user: ' . json_encode($get_user));
+            Log::info('CHECKAUTH_MIDDLEWARE USER' . json_encode($get_user));
 
-            if (!$get_user) {
+            //if user array is empty, redirect to login
+            if (empty($get_user)) {
                 return redirect('/api/auth/login')
-                    ->withCookie(Cookie::forget($this->cookie_name))
-                    ->withCookie(Cookie::forget($this->login_cookie_name))
                     ->with('error', 'User not authenticated');
             }
 
@@ -39,10 +38,15 @@ class CheckAuthenticated
 
             return $next($request);
         } catch (\Exception $e) {
+
+            Log::error('CheckAuthenticated: ' . $e->getMessage());
+
             return redirect('/api/auth/login')
-                ->withCookie(Cookie::forget($this->cookie_name))
-                ->withCookie(Cookie::forget($this->login_cookie_name))
                 ->with('error', 'User not authenticated');
+
+            // return redirect('/api/auth/login')
+            //     ->withCookie(Cookie::forget($this->cookie_name))
+            //     ->with('error', 'User not authenticated');
         }
     }
 
@@ -50,7 +54,9 @@ class CheckAuthenticated
     //get user using session id
     public function get_user(Request $request)
     {
-        $session_id = $request->cookie('user_session');
+        $session_id = $request->cookie($this->cookie_name);
+
+        Log::info('CHECKAUTH_MIDDLEWARE SESSION ID' . $session_id);
 
         if (!$session_id) {
             return [];
@@ -88,9 +94,9 @@ class CheckAuthenticated
         $now_time = date('Y-m-d H:i:s');
 
         //and session_expiry >
-        $query = $db->prepare('SELECT * FROM sessions WHERE session_id = ? AND valid_until > ?');
+        $query = $db->prepare('SELECT * FROM sessions WHERE session_id = ?');
 
-        $query->execute([$session_id, $now_time]);
+        $query->execute([$session_id]);
 
         $session = $query->fetch(\PDO::FETCH_ASSOC);
 
