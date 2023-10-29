@@ -14,7 +14,7 @@ class AuthModel extends Model
     use HasFactory;
 
     private $username = 'admin';
-    private $password = 'admin';
+    private $password = 'Welcome@123#';
     private $cookie_ttl = 5;
     private $session_ttl = 5; //5 minutes
     private $login_cookie_name = 'login_cookie';

@@ -35,22 +35,10 @@
                     <input name="code" type="number" class="appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" id="code" type="text" placeholder="Code">
                     </div>
                     <div class="mt-8">
-
-                    {{-- show proceed button after press resent otp and wait until 1 minute and show timer  --}}
-
                         <div class="text-sm text-gray-700">
                             {{ __('Please confirm access to your account by entering the authentication code provided by your authenticator application.') }}
                         </div>
-
-                        {{-- show the button to continue --}}
                         <div class="flex items-center justify-between mt-4">
-                            {{-- <button type="submit" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button">
-                                Proceed with 2FA
-                            </button> --}}
-
-
-
-
                             <div class="text-sm text-gray-700 w-full">
                                 <span id="timer"></span>
 
@@ -58,33 +46,47 @@
 
                                     // keep the funtion in loop
                                     document.getElementById("timer").innerHTML = '';
+                                    loop_event();
+                                    //now i want the function initiallially to show OTP button and then after 30 seconds to show the timer
+                                    function loop_event() {
+                                        //show the OTP button
+                                        document.getElementById("timer").innerHTML = '<button type="button" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button" onclick="resend_otp()">Send OTP</button>';
+                                    }
+
+                                    // function to Send otp
+                                    function resend_otp() {
+                                        
+                                        //call the function to start the countdown
+                                        startTimer();
+
+                                        //call the function to make ajax request
+                                        call_request();
+
+                                        //hide the button
+                                        document.getElementById("timer").innerHTML = '';
+
+                                        //show the timer until 30 seconds
+                                        document.getElementById("timer").innerHTML = 
+                                        '<button type="submit" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4' + 
+                                        'rounded focus:outline-none focus:shadow-outline" type="button">Proceed with 2FA</button><br><br>' + 
+                                        '<span class="w-full bg-gray" id="countdown">30</span> seconds remaining';
 
 
-                                    function loop_event () {
-                                        var timeleft = 15;
-                                        var downloadTimer = setInterval(function(){
-                                        if(timeleft <= 0){
-                                            clearInterval(downloadTimer);
+                                    }
 
-                                            //show the button to resent otp with OnClick event
-                                            document.getElementById("timer").innerHTML = '<button type="button" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button" onclick="resend_otp()">Resent OTP</button>';
-
-                                        } else {
-                                            var timeL = timeleft + " seconds remaining";
-
-                                            //now add the remaining time to the button
-                                            document.getElementById("timer").innerHTML = '<button type="submit" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button">Proceed with 2FA ('+timeL+')</button>';
-                                        }
-                                        timeleft -= 1;
+                                    //function to start the countdown
+                                    function startTimer() {
+                                        var timeleft = 30;
+                                        var downloadTimer = setInterval(function() {
+                                            timeleft--;
+                                            document.getElementById("countdown").textContent = timeleft;
+                                            if (timeleft <= 1)
+                                                clearInterval(downloadTimer);
                                         }, 1000);
                                     }
 
 
-                                    // call the function
-                                    loop_event();
-
-                                    // function to resent otp
-                                    function resend_otp() {
+                                    function call_request(params) {
                                         //turn above into ajax
                                         $.ajax({
                                             url: "{{ route('verification.resend') }}",
@@ -97,14 +99,13 @@
                                                 _token: '{{ csrf_token() }}'
                                             },
                                             beforeSend: function() {
-                                                console.log('loading');
                                                 document.getElementById("timer").innerHTML = '';
                                             },
                                             success: function(response) {
                                                 //call the function again after 2 seconds
                                                 setTimeout(function() {
                                                     loop_event();
-                                                }, 1000);
+                                                }, 30000);
                                             },
                                             error: function(xhr) {
 
@@ -113,13 +114,12 @@
                                                     location.reload();
                                                 }
 
-                                                //show the button to resent otp with OnClick event
+                                                //show the button to Send otp with OnClick event
                                                 setTimeout(function() {
-                                                    document.getElementById("timer").innerHTML = '<button type="button" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button" onclick="resend_otp()">Resent OTP</button>';
-                                                }, 1000);
+                                                    document.getElementById("timer").innerHTML = '<button type="button" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button" onclick="resend_otp()">Send OTP</button>';
+                                                }, 30000);
                                             }
                                         });
-
                                     }
                                 </script>
 

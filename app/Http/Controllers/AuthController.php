@@ -37,12 +37,13 @@ class AuthController extends Controller
                     )
                     ->with('success', 'Login success');
             } else {
-                Cookie::queue(Cookie::forget($this->login_cookie_name));
+                //set the cookie to expire in the past
+                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
                 return view('auth.login');
             }
         } catch (\Exception $e) {
 
-            Cookie::queue(Cookie::forget('login_cookie'));
+            setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
             return view('auth.login');
         }
     }
@@ -60,7 +61,7 @@ class AuthController extends Controller
 
         try {
             if (!$auth_model->check_user_auth($credentials['username'], $credentials['password'])) {
-                Cookie::queue(Cookie::forget('login_cookie'));
+                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
                 return redirect('/api/auth/login')
                     ->with('error', 'Login failed')
@@ -72,7 +73,7 @@ class AuthController extends Controller
                 ->cookie($this->login_cookie_name, json_encode($credentials), $this->cookie_ttl, '/api/auth', null, false, true)
                 ->with('success', 'Login success');
         } catch (\Exception $e) {
-            Cookie::queue(Cookie::forget('login_cookie'));
+            setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
             return redirect('/api/auth/login')
                 ->with('error', 'Login failed')
@@ -88,7 +89,7 @@ class AuthController extends Controller
         try {
             if (!$get_user_from_login_cookie) {
                 //forget the cookie from the request
-                Cookie::queue(Cookie::forget('login_cookie'));
+                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
                 return redirect('/api/auth/login')
                     ->with('error', 'Login failed')
@@ -105,7 +106,7 @@ class AuthController extends Controller
                 return view('auth.consent');
             }
         } catch (\Exception $e) {
-            Cookie::queue(Cookie::forget('login_cookie'));
+            setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
             return redirect('/api/auth/login')
                 ->with('error', 'Login failed')
@@ -121,7 +122,7 @@ class AuthController extends Controller
         try {
             if (!$get_user_from_login_cookie) {
                 //forget the cookie from the request
-                Cookie::queue(Cookie::forget('login_cookie'));
+                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
                 return redirect('/api/auth/login')
                     ->with('error', 'Login failed')
@@ -132,14 +133,14 @@ class AuthController extends Controller
             $get_user_from_login_cookie['consent'] = $consent;
 
             //create 2fa code and send it to the user
-            $auth_model->send_2fa_code($get_user_from_login_cookie['id']);
+            // $auth_model->send_2fa_code($get_user_from_login_cookie['id']);
 
             //send the user to the consent page with the cookie
             return redirect('/api/auth/2fa')
                 ->cookie('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true)
                 ->with('success', 'Consent provided successfully');
         } catch (\Exception $e) {
-            Cookie::queue(Cookie::forget('login_cookie'));
+            setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
             return redirect('/api/auth/login')
                 ->with('error', 'Login failed')
@@ -155,7 +156,7 @@ class AuthController extends Controller
         try {
             if (!$get_user_from_login_cookie) {
                 //forget the cookie from the request
-                Cookie::queue(Cookie::forget('login_cookie'));
+                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
                 return redirect('/api/auth/login')
                     ->with('error', 'Login failed')
@@ -170,7 +171,7 @@ class AuthController extends Controller
 
                 if ($get_user_from_login_cookie['consent'] == 'false') {
 
-                    Cookie::queue(Cookie::forget('login_cookie'));
+                    setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
                     return redirect('/api/auth/login')
                         ->with('error', 'Login failed')
                         ->withInput();
@@ -181,7 +182,7 @@ class AuthController extends Controller
                 return view('auth.2fa');
             }
         } catch (\Exception $e) {
-            Cookie::queue(Cookie::forget('login_cookie'));
+            setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
             return redirect('/api/auth/login')
                 ->with('error', 'Login failed')
@@ -197,7 +198,9 @@ class AuthController extends Controller
 
         try {
             if (!$get_user_from_login_cookie) {
-                Cookie::queue(Cookie::forget('login_cookie'));
+                //forget the cookie from the request
+                setcookie('login_cookie', '', time() - 3600, '/api/auth', null, false, true);
+
                 return redirect('/api/auth/login')
                     ->with('error', 'Login failed')
                     ->withInput();
@@ -221,7 +224,7 @@ class AuthController extends Controller
                 ->with('success', 'Successfully logged in');
         } catch (\Exception $e) {
 
-            Cookie::queue(Cookie::forget('login_cookie'));
+            setcookie('login_cookie', '', time() - 3600, '/api/auth', null, false, true);
 
             return redirect('/api/auth/login')
                 ->with('error', 'Login failed')
@@ -284,8 +287,11 @@ class AuthController extends Controller
         $auth_model = new AuthModel();
         $auth_model->delete_session($request->cookie('user_session'));
 
-        return redirect('/api/home')
-            ->withCookie(Cookie::forget('user_session'))
+        //php set cookie to expire in the past
+        setcookie('user_session', '', time() - 3600, '/api', null, false, true);
+        setcookie('login_cookie', '', time() - 3600, '/api/auth', null, false, true);
+
+        return redirect('/api/auth/login')
             ->with('success', 'Successfully logged out');
     }
 }
