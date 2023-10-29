@@ -21,7 +21,7 @@
                 <img class="h-36 w-36" src="https://d1csarkz8obe9u.cloudfront.net/posterpreviews/company-logo-design-template-e089327a5c476ce5c70c74f7359c5898_screen.jpg?ts=1672291305" alt="Logo">
             </div>
                 <div class="mt-8">
-                    <h1 class="text-2xl font-bold text-center">Welcome {{ $user['username'] }}</h1>
+                    <h1 class="text-2xl font-bold text-center">Welcome {{ $user->username }}</h1>
                 </div>
 
                 <div class="mt-8 w-full mt-10">

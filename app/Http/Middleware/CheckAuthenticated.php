@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cookie;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -42,10 +43,6 @@ class CheckAuthenticated
             return redirect('/api/auth/login')
                 ->withCookie(Cookie::forget($this->login_cookie_name))
                 ->with('error', 'User not authenticated');
-
-            // return redirect('/api/auth/login')
-            //     ->withCookie(Cookie::forget($this->cookie_name))
-            //     ->with('error', 'User not authenticated');
         }
     }
 
@@ -53,9 +50,7 @@ class CheckAuthenticated
     //get user using session id
     public function get_user(Request $request)
     {
-        $session_id = $request->cookie($this->cookie_name);
-
-        Log::info('CHECKAUTH_MIDDLEWARE SESSION ID' . $session_id);
+        $session_id = $request->cookie('user_session');
 
         if (!$session_id) {
             return [];
@@ -65,39 +60,23 @@ class CheckAuthenticated
             return [];
         }
 
-        $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
+        $session = DB::table('sessions')->where('session_id', $session_id)->first();
 
-        $query = $db->prepare('SELECT * FROM sessions WHERE session_id = ?');
+        $user_id = $session->user_id;
 
-        $query->execute([$session_id]);
-
-        $session = $query->fetch(\PDO::FETCH_ASSOC);
-
-        $user_id = $session['user_id'];
-
-        $query = $db->prepare('SELECT * FROM users WHERE id = ?');
-
-        $query->execute([$user_id]);
-
-        $user = $query->fetch(\PDO::FETCH_ASSOC);
+        $user = DB::table('users')->where('id', $user_id)->first();
 
         //remove the password from the user
-        unset($user['password']);
+        unset($user->password);
 
         return $user;
     }
 
     private function check_session($session_id)
     {
-        $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-        $now_time = date('Y-m-d H:i:s');
-
-        //and session_expiry >
-        $query = $db->prepare('SELECT * FROM sessions WHERE session_id = ?');
-
-        $query->execute([$session_id]);
-
-        $session = $query->fetch(\PDO::FETCH_ASSOC);
+        $session = DB::table('sessions')->where('session_id', $session_id)
+            ->where('valid_until', '>', date('Y-m-d H:i:s'))
+            ->first();
 
         if (!$session) {
             return false;

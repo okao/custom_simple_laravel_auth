@@ -26,6 +26,7 @@ Route::get('/', function () {
 });
 
 Route::group(['middleware' => ['web', 'redirect_auth'], 'prefix' => 'auth'], function () {
+    Route::get('/authorize', [AuthController::class, 'client_authorize'])->name('authorize');
     Route::get('/login', [AuthController::class, 'login'])->name('login');
     Route::post('/submit_login',  [AuthController::class, 'submit_login'])->name('submit_login');
     Route::get('/consent', [AuthController::class, 'consent'])->name('consent');

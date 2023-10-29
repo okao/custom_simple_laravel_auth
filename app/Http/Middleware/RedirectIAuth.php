@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cookie;
 use Symfony\Component\HttpFoundation\Response;
+use Illuminate\Support\Facades\DB;
 
 class RedirectIAuth
 {
@@ -31,7 +32,6 @@ class RedirectIAuth
         }
     }
 
-
     //get user using session id
     public function get_user(Request $request)
     {
@@ -45,37 +45,23 @@ class RedirectIAuth
             return [];
         }
 
-        $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
+        $session = DB::table('sessions')->where('session_id', $session_id)->first();
 
-        $query = $db->prepare('SELECT * FROM sessions WHERE session_id = ?');
+        $user_id = $session->user_id;
 
-        $query->execute([$session_id]);
-
-        $session = $query->fetch(\PDO::FETCH_ASSOC);
-
-        $user_id = $session['user_id'];
-
-        $query = $db->prepare('SELECT * FROM users WHERE id = ?');
-
-        $query->execute([$user_id]);
-
-        $user = $query->fetch(\PDO::FETCH_ASSOC);
+        $user = DB::table('users')->where('id', $user_id)->first();
 
         //remove the password from the user
-        unset($user['password']);
+        unset($user->password);
 
         return $user;
     }
 
     private function check_session($session_id)
     {
-        $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-
-        $query = $db->prepare('SELECT * FROM sessions WHERE session_id = ?');
-
-        $query->execute([$session_id]);
-
-        $session = $query->fetch(\PDO::FETCH_ASSOC);
+        $session = DB::table('sessions')->where('session_id', $session_id)
+            ->where('valid_until', '>', date('Y-m-d H:i:s'))
+            ->first();
 
         if (!$session) {
             return false;

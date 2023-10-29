@@ -6,6 +6,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\Log;
 use App\Models\AuthModel;
+use App\Models\AuthRequest;
+use App\Models\Client;
 
 class AuthController extends Controller
 {
@@ -14,6 +16,79 @@ class AuthController extends Controller
     private $login_cookie_name = 'login_cookie';
     private $session_name = 'user_session';
 
+    public function client_authorize(Request $request)
+    {
+        $auth_model = new AuthModel();
+        $auth_model->initialize();
+
+        $query = http_build_query($request->query());
+
+        // return
+        //     $request->query('client_id') . '<br>' .
+        //     $request->query('redirect_uri') . '<br>' .
+        //     $request->query('state') . '<br>' .
+        //     $request->query('response_type') . '<br>' .
+        //     $request->query('scope') . '<br>' .
+        //     $request->query('code_challenge') . '<br>';
+
+        $client_id = $request->query('client_id');
+        $redirect_uri = $request->query('redirect_uri');
+        $state = $request->query('state');
+        $code_challenge = $request->query('code_challenge');
+
+        //check if the client id exists
+        $client = Client::where('client_id', $client_id)->first();
+
+        if (!$client) {
+            // return redirect($redirect_uri . '?error=invalid_client_id&state=' . $state);
+            return "invalid_client_id";
+        }
+
+        //check if the redirect uri is valid
+        if (!$redirect_uri || $redirect_uri !== $client->redirect_uri) {
+            // return redirect($redirect_uri . '?error=invalid_redirect_uri&state=' . $state);
+            return "invalid_redirect_uri";
+        }
+
+        if (!$state) {
+            // return redirect($redirect_uri . '?error=invalid_state&state=' . $state);
+            return "invalid_state";
+        }
+
+        if (!$code_challenge) {
+            // return redirect($redirect_uri . '?error=invalid_code_challege&state=' . $state);
+            return "invalid_code_challege";
+        }
+
+
+        //create AuthRequest
+        $auth_request = new AuthRequest();
+        $auth_request->request_code = $auth_model->generate_request_code();
+        $auth_request->client_id = $client_id;
+        $auth_request->request_session_id = $auth_model->generate_request_session_id();
+        // $auth_request->redirect_uri = $redirect_uri;
+        $auth_request->state = $state;
+        // $auth_request->code_challege = $code_challenge;
+        $auth_request->expires_at = date('Y-m-d H:i:s', time() + $this->cookie_ttl * 60);
+        $auth_request->save();
+
+
+        //check if usersession exists
+        $user_session = $request->cookie($this->session_name);
+
+        if (!$user_session) {
+            //send the user to the login page
+            return redirect('/api/auth/login')
+                ->cookie($this->login_cookie_name, $auth_request->request_code, $this->cookie_ttl, '/api/auth', null, false, true)
+                ->with('success', 'Please login to continue');
+        }
+
+        //get the user from the session
+        $user = $auth_model->get_user($request);
+
+        return response()->json(['message' => 'User already logged in', 'user' => $user, 'auth_request' => $auth_request], 200);
+    }
+
 
     public function login(Request $request)
     {
@@ -21,26 +96,45 @@ class AuthController extends Controller
         $auth_model = new AuthModel();
         $auth_model->initialize();
         $cookie = $request->cookie($this->login_cookie_name);
-        $credentials = json_decode($cookie, true);
+        // $credentials = json_decode($cookie, true);
 
         try {
-            if ($auth_model->check_user_auth($credentials['username'], $credentials['password'])) {
-                return redirect('/api/auth/consent')
-                    ->cookie(
-                        $this->login_cookie_name,
-                        json_encode($credentials),
-                        $this->cookie_ttl,
-                        '/api/auth',
-                        null,
-                        false,
-                        true
-                    )
-                    ->with('success', 'Login success');
-            } else {
-                //set the cookie to expire in the past
-                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
-                return view('auth.login');
-            }
+            // if ($auth_model->check_user_auth($credentials['username'], $credentials['password'])) {
+            //     return redirect('/api/auth/consent')
+            //         ->cookie(
+            //             $this->login_cookie_name,
+            //             json_encode($credentials),
+            //             $this->cookie_ttl,
+            //             '/api/auth',
+            //             null,
+            //             false,
+            //             true
+            //         )
+            //         ->with('success', 'Login success');
+            // } else {
+            //     //set the cookie to expire in the past
+            //     setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+            //     return view('auth.login');
+            // }
+
+            $previous_auth_request = AuthRequest::where('request_code', $cookie)->first();
+
+            //add new AuthRequest
+            $auth_request = new AuthRequest();
+            $auth_request->request_code = $cookie;
+            $auth_request->client_id = $previous_auth_request->client_id;
+            $auth_request->request_session_id = $previous_auth_request->request_session_id;
+            $auth_request->state = $previous_auth_request->state;
+            $auth_request->scopes = $previous_auth_request->scopes;
+            // $auth_request->code_challenge = $previous_auth_request->code_challenge;
+            $auth_request->expires_at = date('Y-m-d H:i:s', time() + $this->cookie_ttl * 60);
+            $auth_request->save();
+
+            //modify the cookie to add the new request code
+            setcookie($this->login_cookie_name, $auth_request->request_code, $this->cookie_ttl, '/api/auth', null, false, true);
+
+            // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+            return view('auth.login');
         } catch (\Exception $e) {
 
             setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
@@ -96,15 +190,19 @@ class AuthController extends Controller
                     ->withInput();
             }
 
-            if ($get_user_from_login_cookie['consent'] == 'true') {
-                return redirect('/api/auth/2fa')
-                    ->cookie('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true)
-                    ->with('success', 'Consent provided successfully');
-            } else {
-                Cookie::make('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true);
+            // if ($get_user_from_login_cookie['consent'] == 'true') {
+            //     return redirect('/api/auth/2fa')
+            //         ->cookie('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true)
+            //         ->with('success', 'Consent provided successfully');
+            // } else {
+            //     Cookie::make('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true);
 
-                return view('auth.consent');
-            }
+            //     return view('auth.consent');
+            // }
+
+            Cookie::make('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true);
+
+            return view('auth.consent');
         } catch (\Exception $e) {
             setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
@@ -163,24 +261,36 @@ class AuthController extends Controller
                     ->withInput();
             }
 
-            if ($get_user_from_login_cookie['two_fa'] == 'true' && $get_user_from_login_cookie['consent'] == 'true') {
-                return redirect('/api/home')
-                    ->cookie('user_session', $auth_model->create_session_id($get_user_from_login_cookie['id'], 'true', date('Y-m-d H:i:s', time() + $this->session_ttl)), $this->cookie_ttl, '/api/auth', null, false, true)
-                    ->with('success', '2FA provided successfully');
-            } else {
+            // if ($get_user_from_login_cookie['two_fa'] == 'true' && $get_user_from_login_cookie['consent'] == 'true') {
+            //     return redirect('/api/home')
+            //         ->cookie($this->session_name, $auth_model->create_session_id($get_user_from_login_cookie['id'], 'true', date('Y-m-d H:i:s', time() + $this->session_ttl)), $this->cookie_ttl, '/api/auth', null, false, true)
+            //         ->with('success', '2FA provided successfully');
+            // } else {
 
-                if ($get_user_from_login_cookie['consent'] == 'false') {
+            //     if ($get_user_from_login_cookie['consent'] == 'false') {
 
-                    setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
-                    return redirect('/api/auth/login')
-                        ->with('error', 'Login failed')
-                        ->withInput();
-                }
+            //         setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+            //         return redirect('/api/auth/login')
+            //             ->with('error', 'Login failed')
+            //             ->withInput();
+            //     }
 
-                Cookie::make('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true);
+            //     Cookie::make('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true);
 
-                return view('auth.2fa');
+            //     return view('auth.2fa');
+            // }
+
+            if ($get_user_from_login_cookie['consent'] == 'false') {
+
+                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+                return redirect('/api/auth/login')
+                    ->with('error', 'Login failed')
+                    ->withInput();
             }
+
+            Cookie::make('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true);
+
+            return view('auth.2fa');
         } catch (\Exception $e) {
             setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
@@ -220,7 +330,7 @@ class AuthController extends Controller
             $session_id = $auth_model->create_session_id($id, 'true', date('Y-m-d H:i:s', time() + $this->session_ttl));
 
             return redirect('/api/home')
-                ->cookie('user_session', $session_id, $this->cookie_ttl, '/api', null, false, true)
+                ->cookie($this->session_name, $session_id, $this->cookie_ttl, '/api', null, false, true)
                 ->with('success', 'Successfully logged in');
         } catch (\Exception $e) {
 
@@ -242,25 +352,6 @@ class AuthController extends Controller
         } catch (\Exception $e) {
             Log::info(['CredentialsH' => $e->getMessage()]);
         }
-    }
-
-    private function create_session($user_id, $session_id, $validity, $valid_until)
-    {
-        $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-
-        $query = $db->prepare('INSERT INTO sessions (user_id, session_id, validity, valid_until) VALUES (?, ?, ?, ?)');
-
-        $query->execute([$user_id, $session_id, $validity, $valid_until]);
-    }
-
-    private function delete_user_sessions($user_id)
-    {
-        //delete the sessions
-        $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-
-        $query = $db->prepare('DELETE FROM sessions WHERE user_id = ?');
-
-        $query->execute([$user_id]);
     }
 
 
@@ -285,11 +376,11 @@ class AuthController extends Controller
     public function logout(Request $request)
     {
         $auth_model = new AuthModel();
-        $auth_model->delete_session($request->cookie('user_session'));
+        $auth_model->delete_session($request->cookie($this->session_name));
 
         //php set cookie to expire in the past
-        setcookie('user_session', '', time() - 3600, '/api', null, false, true);
-        setcookie('login_cookie', '', time() - 3600, '/api/auth', null, false, true);
+        setcookie($this->session_name, '', time() - 3600, '/api', null, false, true);
+        setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
         return redirect('/api/auth/login')
             ->with('success', 'Successfully logged out');

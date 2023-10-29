@@ -50,12 +50,12 @@
                                     //now i want the function initiallially to show OTP button and then after 30 seconds to show the timer
                                     function loop_event() {
                                         //show the OTP button
-                                        document.getElementById("timer").innerHTML = '<button type="button" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button" onclick="resend_otp()">Send OTP</button>';
+                                        document.getElementById("timer").innerHTML = '<button type="button" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button" onclick="resend_otp()">Request OTP</button>';
                                     }
 
                                     // function to Send otp
                                     function resend_otp() {
-                                        
+
                                         //call the function to start the countdown
                                         startTimer();
 
@@ -66,12 +66,10 @@
                                         document.getElementById("timer").innerHTML = '';
 
                                         //show the timer until 30 seconds
-                                        document.getElementById("timer").innerHTML = 
-                                        '<button type="submit" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4' + 
-                                        'rounded focus:outline-none focus:shadow-outline" type="button">Proceed with 2FA</button><br><br>' + 
-                                        '<span class="w-full bg-gray" id="countdown">30</span> seconds remaining';
-
-
+                                        document.getElementById("timer").innerHTML =
+                                        '<button type="submit" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4' +
+                                        'rounded focus:outline-none focus:shadow-outline" type="button">Proceed with 2FA</button><br><br>' +
+                                        '<div class="w-full bg-gray-100 py-5 text-center" id="countdown">30 seconds remaining</div>';
                                     }
 
                                     //function to start the countdown
@@ -79,7 +77,7 @@
                                         var timeleft = 30;
                                         var downloadTimer = setInterval(function() {
                                             timeleft--;
-                                            document.getElementById("countdown").textContent = timeleft;
+                                            document.getElementById("countdown").textContent = timeleft + " seconds remaining";
                                             if (timeleft <= 1)
                                                 clearInterval(downloadTimer);
                                         }, 1000);
@@ -116,7 +114,7 @@
 
                                                 //show the button to Send otp with OnClick event
                                                 setTimeout(function() {
-                                                    document.getElementById("timer").innerHTML = '<button type="button" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button" onclick="resend_otp()">Send OTP</button>';
+                                                    document.getElementById("timer").innerHTML = '<button type="button" class="w-full bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline" type="button" onclick="resend_otp()">Request OTP</button>';
                                                 }, 30000);
                                             }
                                         });
