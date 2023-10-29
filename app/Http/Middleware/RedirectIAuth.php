@@ -9,10 +9,6 @@ use Symfony\Component\HttpFoundation\Response;
 
 class RedirectIAuth
 {
-    private $username = 'admin';
-    private $password = 'admin';
-    private $cookie_name = 'user_session';
-    private $login_cookie_name = 'login_cookie';
     private $home_path = '/api/home';
 
     /**
@@ -23,7 +19,6 @@ class RedirectIAuth
     public function handle(Request $request, Closure $next): Response
     {
         $get_user = $this->get_user($request);
-
 
         try {
             if (!$get_user) {

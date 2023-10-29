@@ -28,11 +28,9 @@ class CheckAuthenticated
             //if user array is empty, redirect to login
             if (empty($get_user)) {
                 return redirect('/api/auth/login')
+                    ->withCookie(Cookie::forget($this->login_cookie_name))
                     ->with('error', 'User not authenticated');
             }
-
-
-            Cookie::queue(Cookie::forget($this->login_cookie_name));
 
             //TODO update the session expiry
 
@@ -42,6 +40,7 @@ class CheckAuthenticated
             Log::error('CheckAuthenticated: ' . $e->getMessage());
 
             return redirect('/api/auth/login')
+                ->withCookie(Cookie::forget($this->login_cookie_name))
                 ->with('error', 'User not authenticated');
 
             // return redirect('/api/auth/login')
