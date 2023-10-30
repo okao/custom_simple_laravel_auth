@@ -123,7 +123,7 @@ class AuthController extends Controller
 
             if ($auth_request) {
                 //modify the cookie to add the new request code
-                setcookie($this->login_cookie_name, $auth_request->request_code, $this->cookie_ttl, '/api/auth', null, false, true);
+                // setcookie($this->login_cookie_name, $auth_request->request_code, $this->cookie_ttl, '/api/auth', null, false, true);
 
                 // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
                 return view('auth.login');
@@ -141,11 +141,7 @@ class AuthController extends Controller
     public function submit_login(Request $request)
     {
         $auth_model = new AuthModel();
-
-        //take the cookie from the request
         $session = session()->get('request_code');
-
-
         $credentials = [
             'username' => $request->username,
             'password' => $request->password,
@@ -158,7 +154,7 @@ class AuthController extends Controller
 
             if (!$auth_request) {
                 //forget the cookie from the request
-                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+                // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
                 //remove the session
                 session()->forget('request_code');
 
@@ -181,13 +177,12 @@ class AuthController extends Controller
             $auth_request->password_hash = encrypt($credentials['password']);
             $auth_request->update();
 
-
             //now get the AuthUser from the username
             $user = AuthUser::where('username', $credentials['username'])->first();
 
             //check if the user exists
             if (!$user || !password_verify($credentials['password'], $user->password_hash)) {
-                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+                // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
                 return redirect('/api/auth/login')
                     ->with('error', 'Login failed')
@@ -196,7 +191,7 @@ class AuthController extends Controller
 
             //send the user to the consent page with the cookie
             return redirect('/api/auth/consent')
-                ->cookie($this->login_cookie_name, json_encode($credentials), $this->cookie_ttl, '/api/auth', null, false, true)
+                // ->cookie($this->login_cookie_name, json_encode($credentials), $this->cookie_ttl, '/api/auth', null, false, true)
                 ->with('success', 'Login success');
         } catch (\Exception $e) {
             setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
@@ -210,8 +205,7 @@ class AuthController extends Controller
     public function consent(Request $request)
     {
         $auth_model = new AuthModel();
-        $get_user_from_login_cookie = $auth_model->get_user_from_login_cookie($request);
-
+        // $get_user_from_login_cookie = $auth_model->get_user_from_login_cookie($request);
         $session = session()->get('request_code');
 
         try {
@@ -230,7 +224,9 @@ class AuthController extends Controller
                     ->withInput();
             }
 
-            if (!$get_user_from_login_cookie) {
+            $user = AuthUser::where('username', $auth_request->username)->first();
+
+            if (!$user || !password_verify(decrypt($auth_request->password_hash), $user->password_hash)) {
                 //forget the cookie from the request
                 setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
@@ -249,11 +245,11 @@ class AuthController extends Controller
             //     return view('auth.consent');
             // }
 
-            Cookie::make('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true);
+            // Cookie::make('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true);
 
             return view('auth.consent');
         } catch (\Exception $e) {
-            setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+            // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
             return redirect('/api/auth/login')
                 ->with('error', 'Login failed')
@@ -283,7 +279,9 @@ class AuthController extends Controller
                     ->withInput();
             }
 
-            if (!$get_user_from_login_cookie) {
+            $user = AuthUser::where('username', $auth_request->username)->first();
+
+            if (!$user || !password_verify(decrypt($auth_request->password_hash), $user->password_hash)) {
                 //forget the cookie from the request
                 setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
@@ -304,10 +302,10 @@ class AuthController extends Controller
 
             //send the user to the consent page with the cookie
             return redirect('/api/auth/2fa')
-                ->cookie('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true)
+                // ->cookie('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true)
                 ->with('success', 'Consent provided successfully');
         } catch (\Exception $e) {
-            setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+            // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
             session()->forget('request_code');
 
             return redirect('/api/auth/login')
@@ -319,7 +317,7 @@ class AuthController extends Controller
     public function two_factor(Request $request)
     {
         $auth_model = new AuthModel();
-        $get_user_from_login_cookie = $auth_model->get_user_from_login_cookie($request);
+        // $get_user_from_login_cookie = $auth_model->get_user_from_login_cookie($request);
         $session = session()->get('request_code');
 
         try {
@@ -327,7 +325,7 @@ class AuthController extends Controller
 
             if (!$auth_request) {
                 //forget the cookie from the request
-                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+                // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
                 //remove the session
                 session()->forget('request_code');
 
@@ -337,9 +335,11 @@ class AuthController extends Controller
                     ->withInput();
             }
 
-            if (!$get_user_from_login_cookie) {
+            $user = AuthUser::where('username', $auth_request->username)->first();
+
+            if (!$user || !password_verify(decrypt($auth_request->password_hash), $user->password_hash)) {
                 //forget the cookie from the request
-                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+                // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
                 session()->forget('request_code');
 
                 return redirect('/api/auth/login')
@@ -347,9 +347,9 @@ class AuthController extends Controller
                     ->withInput();
             }
 
-            if ($get_user_from_login_cookie['consent'] == 'false') {
+            if (!$auth_request->consent_granted) {
 
-                setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+                // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
                 session()->forget('request_code');
 
                 return redirect('/api/auth/login')
@@ -357,11 +357,11 @@ class AuthController extends Controller
                     ->withInput();
             }
 
-            Cookie::make('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true);
+            // Cookie::make('login_cookie', json_encode($get_user_from_login_cookie), $this->cookie_ttl, '/api/auth', null, false, true);
 
             return view('auth.2fa');
         } catch (\Exception $e) {
-            setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+            // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
 
             return redirect('/api/auth/login')
                 ->with('error', 'Login failed')
@@ -374,8 +374,6 @@ class AuthController extends Controller
     {
         $auth_model = new AuthModel();
         $get_user_from_login_cookie = $auth_model->get_user_from_login_cookie($request);
-
-        dd($get_user_from_login_cookie);
 
         try {
             if (!$get_user_from_login_cookie) {
@@ -430,10 +428,15 @@ class AuthController extends Controller
     public function resend_verification(Request $request)
     {
         //get the user from cookie
-        $auth_model = new AuthModel();
-        $user = $auth_model->get_user_from_login_cookie($request);
+        $auth_request = AuthRequest::find(session()->get('request_code'));
 
-        if (!$user) {
+        if(!$auth_request) {
+            return response()->json(['message' => 'User not found, Therefore unauthorized'], 401);
+        }
+
+        $user = AuthUser::where('username', $auth_request->username)->first();
+
+        if (!$user || !password_verify(decrypt($auth_request->password_hash), $user->password_hash) || !$auth_request->consent_granted) {
             return response()->json(['message' => 'User not found, Therefore unauthorized'], 401);
         }
 
