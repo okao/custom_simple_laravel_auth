@@ -23,18 +23,11 @@ class AuthController extends Controller
 
         $query = http_build_query($request->query());
 
-        // return
-        //     $request->query('client_id') . '<br>' .
-        //     $request->query('redirect_uri') . '<br>' .
-        //     $request->query('state') . '<br>' .
-        //     $request->query('response_type') . '<br>' .
-        //     $request->query('scope') . '<br>' .
-        //     $request->query('code_challenge') . '<br>';
-
         $client_id = $request->query('client_id');
         $redirect_uri = $request->query('redirect_uri');
         $state = $request->query('state');
         $code_challenge = $request->query('code_challenge');
+        $scope = $request->query('scope');
 
         //check if the client id exists
         $client = Client::where('client_id', $client_id)->first();
@@ -58,6 +51,11 @@ class AuthController extends Controller
         if (!$code_challenge) {
             // return redirect($redirect_uri . '?error=invalid_code_challege&state=' . $state);
             return "invalid_code_challege";
+        }
+
+        if (!$scope) {
+            // return redirect($redirect_uri . '?error=invalid_scopes&state=' . $state);
+            return "invalid_scopes";
         }
 
 
@@ -86,7 +84,23 @@ class AuthController extends Controller
         //get the user from the session
         $user = $auth_model->get_user($request);
 
-        return response()->json(['message' => 'User already logged in', 'user' => $user, 'auth_request' => $auth_request], 200);
+        //generate the auth code
+        // $user_id, $client_id, $request_session_id, $code_challenge, $redirect_uri, $scopes
+        $auth_code = $auth_model->generate_auth_code(
+            $user->id, 
+            $client_id, 
+            $auth_request->request_session_id, 
+            $code_challenge,
+            $redirect_uri,
+            $scope
+        );
+
+        //remove the login cookie & session cookie
+        setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
+        setcookie($this->session_name, '', time() - 3600, '/api', null, false, true);
+
+        //redirect the user to the redirect uri with the auth code
+        return redirect($redirect_uri . '?code=' . $auth_code . '&state=' . $state);
     }
 
 
@@ -117,18 +131,18 @@ class AuthController extends Controller
             //     return view('auth.login');
             // }
 
-            $previous_auth_request = AuthRequest::where('request_code', $cookie)->first();
+            $auth_request = AuthRequest::where('request_code', $cookie)->first();
 
             //add new AuthRequest
-            $auth_request = new AuthRequest();
-            $auth_request->request_code = $cookie;
-            $auth_request->client_id = $previous_auth_request->client_id;
-            $auth_request->request_session_id = $previous_auth_request->request_session_id;
-            $auth_request->state = $previous_auth_request->state;
-            $auth_request->scopes = $previous_auth_request->scopes;
-            // $auth_request->code_challenge = $previous_auth_request->code_challenge;
-            $auth_request->expires_at = date('Y-m-d H:i:s', time() + $this->cookie_ttl * 60);
-            $auth_request->save();
+            // $auth_request = new AuthRequest();
+            // $auth_request->request_code = $cookie;
+            // $auth_request->client_id = $previous_auth_request->client_id;
+            // $auth_request->request_session_id = $previous_auth_request->request_session_id;
+            // $auth_request->state = $previous_auth_request->state;
+            // $auth_request->scopes = $previous_auth_request->scopes;
+            // // $auth_request->code_challenge = $previous_auth_request->code_challenge;
+            // $auth_request->expires_at = date('Y-m-d H:i:s', time() + $this->cookie_ttl * 60);
+            // $auth_request->save();
 
             //modify the cookie to add the new request code
             setcookie($this->login_cookie_name, $auth_request->request_code, $this->cookie_ttl, '/api/auth', null, false, true);

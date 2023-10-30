@@ -614,4 +614,43 @@ class AuthModel extends Model
 
         return $user;
     }
+
+    //encrypt using openssl HS256 algorithm and return the encrypted string
+    public function encrypt($data, $key)
+    {
+        $encrypted = base64_encode(openssl_encrypt($data, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $key));
+
+        return $encrypted;
+    }
+
+    //decrypt using openssl HS256 algorithm and return the decrypted string
+    public function decrypt($data, $key)
+    {
+        $decrypted = openssl_decrypt(base64_decode($data), 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $key);
+
+        return $decrypted;
+    }
+
+    //generate_auth_code
+    public function generate_auth_code($user_id, $client_id, $request_session_id, $code_challenge, $redirect_uri, $scopes)
+    {
+        //generate the auth code
+        $auth_code = bin2hex(random_bytes(32));
+
+        //create the auth code in the db
+        $expires_at = date('Y-m-d H:i:s', time() + 60 * 5); //5 minutes
+
+        // $query = $db->prepare('INSERT INTO auth_codes (client_id, user_id, auth_code, redirect_uri, scopes, valid_until) VALUES (?, ?, ?, ?, ?, ?)');
+        // $query->execute([$client_id, $user_id, $auth_code, $redirect_uri, $scopes, $valid_until]);
+
+        $auth_code_model = new AuthCode();
+        $auth_code_model->client_id = $client_id;
+        $auth_code_model->user_id = $user_id;
+        $auth_code_model->auth_code = $auth_code;
+        $auth_code_model->redirect_uri = $redirect_uri;
+        $auth_code_model->scopes = $scopes;
+        $auth_code_model->expires_at = $expires_at;
+        
+        return $auth_code;
+    }
 }
