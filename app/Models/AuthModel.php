@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 
 class AuthModel extends Model
@@ -39,12 +40,8 @@ class AuthModel extends Model
 
         $hashed_password = password_hash($this->password, PASSWORD_DEFAULT);
 
-        $query_select_user = 'SELECT * FROM users WHERE username = ?';
-        $query = $db->prepare($query_select_user);
 
-        $query->execute([$this->username]);
-
-        $user = $query->fetch(\PDO::FETCH_ASSOC);
+        $user = AuthUser::where('username', $this->username)->first();
 
         $client_id = "0df3e5e6e872dff4b61d3f74dad43a7aa6c18aadf2d68e607f031db090db63c3";
 
@@ -53,15 +50,24 @@ class AuthModel extends Model
 
 
         if (!$user) {
-            $query_insert_user = 'INSERT INTO users (username, password, consent, two_factor) VALUES (?, ?, ?, ?)';
-            $query = $db->prepare($query_insert_user);
+            // $query_insert_user = 'INSERT INTO users (username, password, consent, two_factor) VALUES (?, ?, ?, ?)';
+            // $query = $db->prepare($query_insert_user);
 
-            $query->execute([$this->username, $hashed_password, 'false', 'false']);
+            // $query->execute([$this->username, $hashed_password, 'false', 'false']);
+
+            $new_user = new AuthUser();
+
+            //generate a uique uuid for the user
+            $new_user->uuid = (string) Str::orderedUuid();
+
+            $new_user->username = $this->username;
+            $new_user->password_hash = $hashed_password;
+            $new_user->save();
         } else {
-            $query_update_user = 'UPDATE users SET password = ?, consent = ?, two_factor = ? WHERE username = ?';
-            $query = $db->prepare($query_update_user);
 
-            $query->execute([$hashed_password, 'false', 'false', $this->username]);
+            $update_user = AuthUser::where('username', $this->username)->update([
+                'password_hash' => $hashed_password
+            ]);
         }
 
         if (!$client) {
@@ -650,7 +656,32 @@ class AuthModel extends Model
         $auth_code_model->redirect_uri = $redirect_uri;
         $auth_code_model->scopes = $scopes;
         $auth_code_model->expires_at = $expires_at;
-        
+
         return $auth_code;
+    }
+
+    //set session
+    public function set_session($session_name, $session_value)
+    {
+        //make session available for 15 minutes only
+        session()->put($session_name, $session_value);
+
+        session()->save();
+
+        return true;
+    }
+
+    //get session
+    public function get_session($session_name)
+    {
+        return session()->get($session_name);
+    }
+
+    //delete session
+    public function delete_session_name($session_name)
+    {
+        session()->forget($session_name);
+
+        return true;
     }
 }

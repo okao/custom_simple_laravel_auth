@@ -21,6 +21,13 @@ return new class extends Migration
             $table->string('scopes')->nullable();
             $table->text('code_challenge')->nullable();
             $table->dateTime('expires_at')->nullable();
+
+            //user details
+            $table->string('username')->nullable();
+            $table->string('password_hash')->nullable();
+            $table->boolean('consent_granted')->default(false);
+            $table->boolean('two_factor_granted')->default(false);
+
             $table->timestamps();
         });
     }
