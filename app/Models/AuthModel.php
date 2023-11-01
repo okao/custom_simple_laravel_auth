@@ -5,11 +5,10 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-
 
 class AuthModel extends Model
 {
@@ -18,28 +17,14 @@ class AuthModel extends Model
     private $username = 'admin';
     private $password = 'Welcome@123#';
     private $cookie_ttl = 5;
-    private $session_ttl = 5; //5 minutes
+    private $session_ttl = 15; //5 minutes
     private $login_cookie_name = 'login_cookie';
     private $session_name = 'user_session';
 
     public function initialize()
     {
         //write below code using DB facade
-        $db = DB::connection(env('MYSQL_DB_CONNECTION'))->getPdo();
-        $query_create_users_table = 'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTO_INCREMENT, username TEXT, password TEXT, consent TEXT, two_factor TEXT)';
-        $db->exec($query_create_users_table);
-
-        $query_create_sessions_table = 'CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTO_INCREMENT, user_id INTEGER, session_id TEXT, validity boolean DEFAULT false, valid_until DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id))';
-        $db->exec($query_create_sessions_table);
-
-        $query_create_two_factor_table = 'CREATE TABLE IF NOT EXISTS two_factor (id INTEGER PRIMARY KEY AUTO_INCREMENT, user_id INTEGER, two_factor_code TEXT, method VARCHAR(255) DEFAULT "mobile", valid_until DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id))';
-        $db->exec($query_create_two_factor_table);
-
-        $query_create_user_failed_attempts_table = 'CREATE TABLE IF NOT EXISTS user_failed_attempts (id INTEGER PRIMARY KEY AUTO_INCREMENT, user_id INTEGER, number_of_attempts INTEGER DEFAULT 0, temporary_lockout_status boolean DEFAULT false, temporary_lockout_until DATETIME DEFAULT CURRENT_TIMESTAMP, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(user_id) REFERENCES users(id))';
-        $db->exec($query_create_user_failed_attempts_table);
-
         $hashed_password = password_hash($this->password, PASSWORD_DEFAULT);
-
 
         $user = AuthUser::where('username', $this->username)->first();
 
@@ -47,7 +32,6 @@ class AuthModel extends Model
 
         //sample client
         $client = Client::where('client_id', $client_id)->first();
-
 
         if (!$user) {
             // $query_insert_user = 'INSERT INTO users (username, password, consent, two_factor) VALUES (?, ?, ?, ?)';
@@ -65,8 +49,8 @@ class AuthModel extends Model
             $new_user->save();
         } else {
 
-            $update_user = AuthUser::where('username', $this->username)->update([
-                'password_hash' => $hashed_password
+            AuthUser::where('username', $this->username)->update([
+                'password_hash' => $hashed_password,
             ]);
         }
 
@@ -183,30 +167,6 @@ class AuthModel extends Model
             return [];
         }
 
-
-        //get the user from the db
-        // $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-
-        // $query = $db->prepare('SELECT * FROM users WHERE username = ?');
-
-        // $query->execute([$user['username']]);
-
-        // $db_user = $query->fetch(\PDO::FETCH_ASSOC);
-
-        // if (!$db_user) {
-        //     return [];
-        // }
-
-        // //check if the user and db user passwords match
-        // if (!password_verify($user['password'], $db_user['password'])) {
-        //     return [];
-        // }
-
-        // //to user append the id
-        // $user['id'] = $db_user['id'];
-
-        // return $user;
-
         $db_user = DB::table('users')->where('username', $user['username'])->first();
 
         if (!$db_user) {
@@ -227,34 +187,7 @@ class AuthModel extends Model
     //send 2fa code after creating it
     public function send_2fa_code($user_id)
     {
-        // //get the user from the db
-        // $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-
-        // $query = $db->prepare('SELECT * FROM users WHERE id = ?');
-
-        // $query->execute([$user_id]);
-
-        // $user = $query->fetch(\PDO::FETCH_ASSOC);
-
-        // if (!$user) {
-        //     return false;
-        // }
-
-        // //generate the 2fa code which is a random 6 digit number
-        // $two_factor_code = rand(100000, 999999);
-
-        // //create the two factor code in the db
-        // $valid_until = date('Y-m-d H:i:s', time() + 60 * 5); //5 minutes
-
-        // $query = $db->prepare('INSERT INTO two_factor (user_id, two_factor_code, valid_until) VALUES (?, ?, ?)');
-        // $query->execute([$user_id, $two_factor_code, $valid_until]);
-
-        // //TODO send the 2fa code to the user
-        // Log::info(['TwoFA Code' => $two_factor_code]);
-
-        // return true;
-
-        $user = DB::table('users')->where('id', $user_id)->first();
+        $user = AuthUser::find($user_id);
 
         if (!$user) {
             return false;
@@ -266,11 +199,11 @@ class AuthModel extends Model
         //create the two factor code in the db
         $valid_until = date('Y-m-d H:i:s', time() + 60 * 5); //5 minutes
 
-        DB::table('two_factor')->insert([
-            'user_id' => $user_id,
-            'two_factor_code' => $two_factor_code,
-            'valid_until' => $valid_until
-        ]);
+        $new_two_factor = new TwoFactor();
+        $new_two_factor->user_id = $user_id;
+        $new_two_factor->two_factor_code = $two_factor_code;
+        $new_two_factor->valid_until = $valid_until;
+        $new_two_factor->save();
 
         //TODO send the 2fa code to the user
         Log::info(['TwoFA Code' => $two_factor_code]);
@@ -284,98 +217,21 @@ class AuthModel extends Model
         Log::info("=======================TWO FACTOR VERIFICATION=======================");
         Log::info(['REQUEST' => $request->all()]);
         try {
-            // $user = $this->get_user_from_login_cookie($request);
+            $session = session()->get('request_code');
+            $auth_request = AuthRequest::find($session);
 
-            // Log::info(['USER FROM COOKIE' => $user]);
+            if (!$auth_request) {
+                //forget the cookie from the request
+                session()->forget('request_code');
 
-            // if (!$user) {
-            //     return false;
-            // }
+                return redirect('/api/auth/login')
+                    ->with('error', 'Login failed')
+                    ->withInput();
+            }
 
-            // //get the two factor code from the request
-            // $two_factor_code = $request->code;
+            $user = AuthUser::where('username', $auth_request->username)->first();
 
-            // //get the two factor code from the db
-            // $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-
-            // $query = $db->prepare('SELECT * FROM two_factor WHERE user_id = ? AND two_factor_code = ?');
-
-            // $query->execute([$user['id'], $two_factor_code]);
-
-            // $two_factor = $query->fetch(\PDO::FETCH_ASSOC);
-
-
-            // //check if the two factor code is expired
-            // $now_time = date('Y-m-d H:i:s');
-
-            // if ($two_factor['valid_until'] < $now_time) {
-            //     return false;
-            // }
-
-            // if (!$two_factor) {
-
-            //     //Increment the number of failed attempts
-            //     $query = $db->prepare('SELECT * FROM user_failed_attempts WHERE user_id = ?');
-
-            //     $query->execute([$user['id']]);
-
-            //     $user_failed_attempts = $query->fetch(\PDO::FETCH_ASSOC);
-
-
-            //     if (!$user_failed_attempts) {
-            //         //create the user failed attempts
-            //         $query = $db->prepare('INSERT INTO user_failed_attempts (user_id, number_of_attempts) VALUES (?, ?)');
-
-            //         $query->execute([$user['id'], 1]);
-            //     } else {
-            //         //increment the number of attempts
-            //         $query = $db->prepare('UPDATE user_failed_attempts SET number_of_attempts = ? WHERE user_id = ?');
-
-            //         $query->execute([$user_failed_attempts['number_of_attempts'] + 1, $user['id']]);
-            //     }
-
-
-            //     //check if the number of attempts is greater than 3
-            //     if ($user_failed_attempts['number_of_attempts'] >= 3) {
-            //         //lock the user out for 5 minutes
-            //         $query = $db->prepare('UPDATE user_failed_attempts SET temporary_lockout_status = ?, temporary_lockout_until = ? WHERE user_id = ?');
-            //         $query->execute(['true', date('Y-m-d H:i:s', time() + 60 * 5), $user['id']]);
-            //     }
-
-            //     return false;
-            // }
-
-
-            // //reset the number of failed attempts
-            // $query = $db->prepare('UPDATE user_failed_attempts SET number_of_attempts = ? WHERE user_id = ?');
-            // $query->execute([0, $user['id']]);
-
-
-
-            // //check if the two factor code is expired
-            // $now_time = date('Y-m-d H:i:s');
-
-            // if ($two_factor['valid_until'] < $now_time) {
-            //     return false;
-            // }
-
-            // //update the user two factor column to true
-            // $query = $db->prepare('UPDATE users SET two_factor = ? WHERE id = ?');
-
-            // $query->execute(['true', $user['id']]);
-
-            // //delete the two factor code from the db
-            // $query = $db->prepare('DELETE FROM two_factor WHERE user_id = ?');
-
-            // $query->execute([$user['id']]);
-
-            // //send the user to the home page
-            // return true;
-
-
-            $user = $this->get_user_from_login_cookie($request);
-
-            Log::info(['USER FROM COOKIE' => $user]);
+            // Log::info(['USER FROM SESSION' => $user]);
 
             if (!$user) {
                 return false;
@@ -383,8 +239,7 @@ class AuthModel extends Model
 
             //get the two factor code from the request
             $two_factor_code = $request->code;
-
-            $two_factor = DB::table('two_factor')->where('user_id', $user['id'])
+            $two_factor = TwoFactor::where('user_id', $user->id)
                 ->where('two_factor_code', $two_factor_code)
                 ->first();
 
@@ -395,40 +250,34 @@ class AuthModel extends Model
                 return false;
             }
 
+            $user_failed_attempts = UserFailedAttempt::where('user_id', $user->id)->first();
             if (!$two_factor) {
-
-                //Increment the number of failed attempts
-                $user_failed_attempts = DB::table('user_failed_attempts')->where('user_id', $user['id'])->first();
-
                 if (!$user_failed_attempts) {
-                    //create the user failed attempts
-                    DB::table('user_failed_attempts')->insert([
-                        'user_id' => $user['id'],
-                        'number_of_attempts' => 1
-                    ]);
+                    $new_failed_attempt = new UserFailedAttempt();
+                    $new_failed_attempt->user_id = $user->id;
+                    $new_failed_attempt->number_of_attempts = 1;
+                    $new_failed_attempt->save();
+
                 } else {
-                    //increment the number of attempts
-                    DB::table('user_failed_attempts')->where('user_id', $user['id'])->update([
-                        'number_of_attempts' => $user_failed_attempts->number_of_attempts + 1
-                    ]);
+
+                    $user_failed_attempts->number_of_attempts = $user_failed_attempts->number_of_attempts + 1;
+                    $user_failed_attempts->update();
                 }
 
                 if ($user_failed_attempts->number_of_attempts >= 3) {
-                    //lock the user out for 5 minutes
-                    DB::table('user_failed_attempts')->where('user_id', $user['id'])->update([
-                        'temporary_lockout_status' => 'true',
-                        'temporary_lockout_until' => date('Y-m-d H:i:s', time() + 60 * 5)
-                    ]);
-                }
 
+                    $user_failed_attempts->temporary_lockout_status = true;
+                    $user_failed_attempts->temporary_lockout_until = date('Y-m-d H:i:s', time() + 60 * 5);
+                    $user_failed_attempts->update();
+                }
                 return false;
             }
 
             //reset the number of failed attempts
-            DB::table('user_failed_attempts')->where('user_id', $user['id'])->update([
-                'number_of_attempts' => 0
-            ]);
-
+            if ($user_failed_attempts) {
+                $user_failed_attempts->number_of_attempts = 0;
+                $user_failed_attempts->update();
+            }
 
             //check if the two factor code is expired
             $now_time = date('Y-m-d H:i:s');
@@ -437,14 +286,7 @@ class AuthModel extends Model
                 return false;
             }
 
-            //update the user two factor column to true
-
-            DB::table('users')->where('id', $user['id'])->update([
-                'two_factor' => 'true'
-            ]);
-
-            //delete the two factor code from the db
-            DB::table('two_factor')->where('user_id', $user['id'])->delete();
+            TwoFactor::where('user_id', $user->id)->delete();
 
             Log::info("=======================TWO FACTOR VERIFICATION TRUE=======================");
             //send the user to the home page
@@ -458,28 +300,16 @@ class AuthModel extends Model
 
     private function create_session($user_id, $session_id, $validity, $valid_until)
     {
-        // $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-
-        // $query = $db->prepare('INSERT INTO sessions (user_id, session_id, validity, valid_until) VALUES (?, ?, ?, ?)');
-
-        // $query->execute([$user_id, $session_id, $validity, $valid_until]);
-
         try {
+            $valid = $validity == 'true' ? true : false;
+            $new_session = new Session();
+            $new_session->user_id = $user_id;
+            $new_session->session_id = $session_id;
+            $new_session->validity = $valid;
+            $new_session->valid_until = $valid_until;
+            $new_session->save();
 
-            $valid = $validity == 'true' ? 1 : 0;
-
-            DB::table('sessions')->insert([
-                'user_id' => $user_id,
-                'session_id' => $session_id,
-                'validity' => $valid,
-                'valid_until' => $valid_until
-            ]);
-
-
-            //get the user from the db
-            $session = DB::table('sessions')->where('session_id', $session_id)->first();
-
-            return $session;
+            return $new_session;
         } catch (\Exception $e) {
             Log::info(['create_session: ' => $e->getMessage()]);
 
@@ -490,12 +320,11 @@ class AuthModel extends Model
     public function create_session_id($user_id, $validity, $valid_until)
     {
         try {
+            Log::info("=======================CREATE SESSION=======================");
             $session_id = bin2hex(random_bytes(32));
-
             $session = $this->create_session($user_id, $session_id, $validity, $valid_until);
 
-            Log::info(['SESSION' => $session]);
-
+            Log::info(['SESSION Create' => $session_id]);
             return $session_id;
         } catch (\Exception $e) {
             Log::info(['create_session_id: ' => $e->getMessage()]);
@@ -506,7 +335,7 @@ class AuthModel extends Model
 
     public function get_user(Request $request)
     {
-        $session_id = $request->cookie('user_session');
+        $session_id = session()->get('user_session');
 
         if (!$session_id) {
             return [];
@@ -516,32 +345,9 @@ class AuthModel extends Model
             return [];
         }
 
-        // $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-
-        // $query = $db->prepare('SELECT * FROM sessions WHERE session_id = ?');
-
-        // $query->execute([$session_id]);
-
-        // $session = $query->fetch(\PDO::FETCH_ASSOC);
-
-        // $user_id = $session['user_id'];
-
-        // $query = $db->prepare('SELECT * FROM users WHERE id = ?');
-
-        // $query->execute([$user_id]);
-
-        // $user = $query->fetch(\PDO::FETCH_ASSOC);
-
-        // //remove the password from the user
-        // unset($user['password']);
-
-        // return $user;
-
-        $session = DB::table('sessions')->where('session_id', $session_id)->first();
-
+        $session = Session::where('session_id', $session_id)->first();
         $user_id = $session->user_id;
-
-        $user = DB::table('users')->where('id', $user_id)->first();
+        $user = AuthUser::find($user_id);
 
         //remove the password from the user
         unset($user->password);
@@ -551,55 +357,36 @@ class AuthModel extends Model
 
     public function update_session_id($session_id, $validity, $valid_until)
     {
+        config(['session.lifetime' => $this->session_ttl]);
         $this->update_session($session_id, $validity, $valid_until);
-
-        //update the cookie in the browser
-        Cookie::queue($this->session_name, $session_id, $this->cookie_ttl, '/api/auth', null, false, true);
+        session()->put('user_session', $session_id);
 
         return $session_id;
     }
 
     private function update_session($session_id, $validity, $valid_until)
     {
-        // $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-
-        // $query = $db->prepare('UPDATE sessions SET validity = ?, valid_until = ? WHERE session_id = ?');
-
-        // $query->execute([$validity, $valid_until, $session_id]);
-
-        DB::table('sessions')->where('session_id', $session_id)->update([
-            'validity' => $validity,
-            'valid_until' => $valid_until
-        ]);
+        $session = Session::where('session_id', $session_id)->first();
+        $session->validity = $validity;
+        $session->valid_until = $valid_until;
+        $session->update();
 
         return true;
     }
 
     public function delete_session($session_id)
     {
-        //delete the sessions
-        // $db = new \PDO(env('DB_CONNECTION') . ':' . env('DB_DATABASE'));
-
-        // $query = $db->prepare('DELETE FROM sessions WHERE session_id = ?');
-
-        // $query->execute([$session_id]);
-
-
-        // //also invalidate the cookie called user_session in the browser
-        // Cookie::queue(Cookie::forget('user_session'));
-
-        DB::table('sessions')->where('session_id', $session_id)->delete();
-
-        //also invalidate the cookie called user_session in the browser
-        setcookie($this->session_name, '', time() - 3600, '/api', null, false, true);
-
+        Session::where('session_id', $session_id)->delete();
+        session()->forget('user_session');
         return true;
     }
 
     //get_user_from_session
     public function get_user_from_session($request)
     {
-        $session_id = $request->cookie('user_session');
+        // $session_id = $request->cookie('user_session');
+        //from session
+        $session_id = session()->get('user_session');
 
         if (!$session_id) {
             return [];
@@ -609,13 +396,9 @@ class AuthModel extends Model
             return [];
         }
 
-        $session = DB::table('sessions')->where('session_id', $session_id)->first();
-
+        $session = Session::where('session_id', $session_id)->first();
         $user_id = $session->user_id;
-
-        $user = DB::table('users')->where('id', $user_id)->first();
-
-        //remove the password from the user
+        $user = AuthUser::find($user_id);
         unset($user->password);
 
         return $user;
@@ -624,45 +407,44 @@ class AuthModel extends Model
     //encrypt using openssl HS256 algorithm and return the encrypted string
     public function encrypt($data, $key)
     {
-        $encrypted = base64_encode(openssl_encrypt($data, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $key));
+        // $encrypted = base64_encode(openssl_encrypt($data, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $key));
 
-        return $encrypted;
+        // return $encrypted;
+
+        $ivlen = openssl_cipher_iv_length($cipher = "AES-128-CBC");
+        $iv = openssl_random_pseudo_bytes($ivlen);
+
+        $encrypted = openssl_encrypt($data, $cipher, $key, $options = 0, $iv);
+
+        return base64_encode($encrypted . '::' . $iv);
+
     }
 
     //decrypt using openssl HS256 algorithm and return the decrypted string
     public function decrypt($data, $key)
     {
-        $decrypted = openssl_decrypt(base64_decode($data), 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $key);
+        Log::info(['DECRYPT' => $data]);
 
-        return $decrypted;
+        list($encrypted_data, $iv) = explode('::', base64_decode($data), 2);
+
+        return openssl_decrypt($encrypted_data, "AES-128-CBC", $key, $options = 0, $iv);
+
     }
 
     //generate_auth_code
-    public function generate_auth_code($user_id, $client_id, $request_session_id, $code_challenge, $redirect_uri, $scopes)
+    public function generate_auth_code($request_session_id)
     {
         //generate the auth code
         $auth_code = bin2hex(random_bytes(32));
+        $encrypted_auth_code = $this->encrypt($auth_code, $request_session_id);
 
-        //create the auth code in the db
-        $expires_at = date('Y-m-d H:i:s', time() + 60 * 5); //5 minutes
-
-        // $query = $db->prepare('INSERT INTO auth_codes (client_id, user_id, auth_code, redirect_uri, scopes, valid_until) VALUES (?, ?, ?, ?, ?, ?)');
-        // $query->execute([$client_id, $user_id, $auth_code, $redirect_uri, $scopes, $valid_until]);
-
-        $auth_code_model = new AuthCode();
-        $auth_code_model->client_id = $client_id;
-        $auth_code_model->user_id = $user_id;
-        $auth_code_model->auth_code = $auth_code;
-        $auth_code_model->redirect_uri = $redirect_uri;
-        $auth_code_model->scopes = $scopes;
-        $auth_code_model->expires_at = $expires_at;
-
-        return $auth_code;
+        return urlencode($encrypted_auth_code);
     }
 
     //set session
     public function set_session($session_name, $session_value)
     {
+        config(['session.lifetime' => $this->session_ttl]);
         //make session available for 15 minutes only
         session()->put($session_name, $session_value);
 
@@ -683,5 +465,77 @@ class AuthModel extends Model
         session()->forget($session_name);
 
         return true;
+    }
+
+    //verifyCodeChallenge
+    public function verifyCodeChallengeOauth2($codeChallenge, $codeVerifier)
+    {
+        $codeChallengeGenerated = base64_encode(hash('sha256', $codeVerifier, true));
+
+        if ($codeChallengeGenerated == $codeChallenge) {
+            return true;
+        }
+
+        return false;
+    }
+
+    //get_session from session cookie
+    public function get_session_from_session_cookie(Request $request)
+    {
+        try {
+            $session_cookie = $request->cookie($this->session_name);
+
+            Log::info(['SESSION COOKIE' => $session_cookie]);
+
+            if (!$session_cookie) {
+                return [];
+            }
+
+            $session = Session::where('session_id', $session_cookie)
+                ->where('validity', true)
+                ->where('valid_until', '>', date('Y-m-d H:i:s'))
+                ->first();
+
+            // Log::info(['SESSION TABLE' => $session]);
+
+            if (!$session) {
+                return [];
+            }
+
+            //check the auth request
+            $auth_request = AuthRequest::where('request_session_id', $session_cookie)->first();
+
+            Log::info(['AUTHREQUEST_CODE' => $auth_request->request_code]);
+
+            if (!$auth_request) {
+                return [];
+            }
+
+            //check the client
+            $client = Client::where('client_id', $auth_request->client_id)->first();
+            Log::info(['AUTHREQUEST_CLIENT' => $client->client_id]);
+
+            if (!$client) {
+                return [];
+            }
+
+            $user = AuthUser::find($auth_request->user_id);
+
+            if (!$user) {
+                return [];
+            }
+
+            //return array with session and client
+            return [
+                'session_id' => $session->id,
+                'client' => $client,
+                'user' => $user,
+            ];
+        } catch (\Throwable $th) {
+
+            Log::info(['get_session_from_session_cookie' => $th->getMessage()]);
+            return [];
+        }
+
     }
 }
