@@ -8,6 +8,7 @@ use App\Models\AuthRequest;
 use App\Models\AuthUser;
 use App\Models\Client;
 use App\Models\Session as ModelsSession;
+use App\Models\Token;
 use Carbon\Carbon;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
@@ -118,6 +119,7 @@ class AuthController extends Controller
         //get the user from the session
         $user = $session['user'];
         $sesion_id = $session['session_id'];
+        $current_request = $session['auth_request'];
 
         if (!$user) {
             //set session lifetime to 10 minutes
@@ -138,18 +140,33 @@ class AuthController extends Controller
 
         //generate the auth code
         // $user_id, $client_id, $request_session_id, $code_challenge, $redirect_uri, $scopes
-        $auth_code = $auth_model->generate_auth_code(
-            $session['session_id'],
+
+        $data_to_enc = [];
+        $data_to_enc['user_id'] = $user->id;
+        $data_to_enc['client_id'] = $client->client_id;
+        $data_to_enc['session_id'] = $session['session_id'];
+        $data_to_enc['request_id'] = $current_request->id;
+
+        $auth_code = $auth_model->encrypt_decrypt(
+            'encrypt',
+            json_encode($data_to_enc),
+            $client->client_secret,
+            env('APP_KEY')
         );
 
         //remove the login cookie & session cookie
         // setcookie($this->login_cookie_name, '', time() - 3600, '/api/auth', null, false, true);
         setcookie($this->session_name, '', time() - 3600, '/api', null, false, true);
+        Log::info([
+            'auth_code_raw' => $auth_code,
+            'auth_code' => urlencode($auth_code),
+            'client_id' => $client,
+        ]);
 
         //add the auth code to the db
         $auth_code_record = new AuthCode();
-        $auth_code_record->code = urlencode($auth_code);
-        $auth_code_record->client_id = $client->client_id;
+        $auth_code_record->code = $auth_code;
+        $auth_code_record->client_id = $client->id;
         $auth_code_record->session_id = $session['session_id'];
         $auth_code_record->user_id = $user->id;
         $auth_code_record->code_challenge = $code_challenge;
@@ -159,7 +176,7 @@ class AuthController extends Controller
         $auth_code_record->save();
 
         //redirect the user to the redirect uri with the auth code
-        return redirect($redirect_uri . '?code=' . $auth_code . '&state=' . $state);
+        return redirect($redirect_uri . '?code=' . urlencode($auth_code) . '&state=' . $state);
     }
 
     public function login(Request $request)
@@ -573,7 +590,7 @@ class AuthController extends Controller
     public function token(Request $request)
     {
         $auth_model = new AuthModel();
-        $logCapture = $request->log;
+        // $logCapture = $request->log;
 
         // $log = OauthLog::find($logCapture['id']);
 
@@ -581,322 +598,385 @@ class AuthController extends Controller
         $client_id = $request->input('client_id');
         $client_secret = $request->input('client_secret');
         $code_verifier = $request->input('code_verifier');
+        $code = $request->input('code');
+
+        Log::info([
+            'request' => $request->all(),
+        ]);
 
         $client = Client::where('client_id', $client_id)->first();
 
         // Check the grant type
         $grant_type = $request->input('grant_type');
 
-        if ($grant_type === 'authorization_code') {
-            // dD($client);
-            if (!$client || $client->client_secret !== $client_secret) {
-                $response = [
-                    'error' => 'invalid_client',
-                    'error_description' => 'The client credentials are invalid',
+        try {
+            if ($grant_type === 'authorization_code') {
+
+                // dD($client);
+                if (!$client || $client->client_secret !== $client_secret) {
+                    $response = [
+                        'error' => 'invalid_client',
+                        'error_description' => 'The client credentials are invalid',
+                    ];
+
+                    // $log->response = json_encode($response);
+                    // $log->update();
+
+                    return response()->json($response, 400);
+                }
+                //if no code verifier is provided, return error
+                if (!$code_verifier) {
+                    $response = [
+                        'error' => 'invalid_grant',
+                        'error_description' => 'code_verifier is required',
+                    ];
+
+                    // $log->response = json_encode($response);
+                    // $log->update();
+
+                    return response()->json($response, 400);
+                }
+
+                // Verify the authorization code
+                $auth_code = urldecode($request->input('code'));
+
+                $auth_code_decrypted = $auth_model->encrypt_decrypt(
+                    'decrypt',
+                    $request->input('code'),
+                    $client_secret,
+                    env('APP_KEY')
+                );
+
+                $decoded_code = json_decode($auth_code_decrypted);
+
+                $auth_code_record = AuthCode::where('code', $auth_code)
+                    ->where('session_id', $decoded_code->session_id)
+                // ->where('client_id', $client->id)
+                // ->where('expires_at', '>', now())
+                    ->where('revoked', false)
+                    ->first();
+
+                if (!$auth_code_record) {
+                    return response()->json([
+                        'error' => 'invalid_grant',
+                        'error_description' => 'The authorization code is invalid 2',
+                    ], 400);
+                }
+
+                //Session id
+                $session = ModelsSession::find($auth_code_record->session_id);
+
+                //check if the session is valid
+                if (!$session || $session->validity === false) {
+                    return response()->json([
+                        'error' => 'invalid_grant',
+                        'error_description' => 'The authorization code is invalid 1',
+                    ], 400);
+                }
+
+                //check if code verifier matches the code challenge
+                // $code_challenge = $auth_code_record->code_challenge;
+
+                // //new check if the code verifier matches the code challenge
+                // if (!$auth_model->verifyCodeChallenge($code_challenge, $code_verifier)) {
+                //     return response()->json([
+                //         'status_message' => 'invalid_grant',
+                //         'status_description' => 'code_verifier does not match code_challenge',
+                //     ], 400);
+                // }
+
+                // //check if the auth code matches the client session id + redirect uri + scopes + expires at + auth code + state
+                // $auth_code_details = AuthCode::where('auth_code', urlencode($auth_code))
+                //     ->where('client_id', $client->id)
+                //     ->where('session_id', $auth_code_record->session_id)
+                //     ->where('scopes', $auth_code_record->scopes)
+                //     ->where('user_id', $auth_code_record->user_id)
+                //     ->where('expires_at', '>', now())
+                //     ->first();
+
+                // if (!$auth_code_details) {
+                //     $response = [
+                //         'error' => 'invalid_grant',
+                //         'error_description' => 'The authorization code is invalid',
+                //     ];
+
+                //     // $log->response = json_encode($response);
+                //     // $log->update();
+
+                //     return response()->json($response, 400);
+                // }
+
+                $ac_validity = now()->addMinutes($client->access_token_ttl);
+                $rt_validity = now()->addMinutes($client->refresh_token_ttl);
+                $client_secret = $client->client_secret;
+
+                $access_payload = [
+                    'client_id' => $client->client_id,
+                    'scopes' => $auth_code_record->scopes,
+                    'expires_in' => $ac_validity->timestamp,
+                    'user_id' => $auth_code_record->user_id,
+                    'session_id' => $auth_code_record->session_id,
                 ];
+
+                $refresh_payload = [
+                    'client_id' => $client->client_id,
+                    'scopes' => $auth_code_record->scopes,
+                    'expires_in' => $rt_validity->timestamp,
+                    'user_id' => $auth_code_record->user_id,
+                    'session_id' => $auth_code_record->session_id,
+                ];
+
+                // $privateKey = openssl_pkey_get_private($privateKeyEncrypted, $client_secret);
+                // $accessTokenNew = JWT::encode($access_payload, $privateKey, 'RS256', $client->id, [
+                //     'alg' => 'RS256',
+                //     'kid' => $client->id,
+                //     'sub' => $client->client_id,
+                //     'jti' => $auth_code_record->user_id,
+                //     'exp' => $ac_validity->timestamp,
+                // ]);
+                // $refreshTokenNew = JWT::encode($refresh_payload, $privateKey, 'RS256', $client->id, [
+                //     'alg' => 'RS256',
+                //     'kid' => $client->id,
+                //     'sub' => $client->client_id,
+                //     'jti' => $auth_code_record->user_id,
+                //     'exp' => $rt_validity->timestamp,
+                // ]);
+
+                $accessTokenNew = JWT::encode(
+                    $access_payload,
+                    $client_secret,
+                    'HS256',
+                );
+
+                $refreshTokenNew = JWT::encode(
+                    $refresh_payload,
+                    $client_secret,
+                    'HS256',
+                );
+
+                //accessToken and refreshToken
+                $refresh_token = new Token();
+                $refresh_token->type = 'refresh_token';
+                $refresh_token->user_id = $auth_code_record->user_id;
+                $refresh_token->client_id = $auth_code_record->client_id;
+                $refresh_token->for = $client->redirect_uri;
+                $refresh_token->token = $refreshTokenNew;
+                $refresh_token->scopes = $auth_code_record->scopes;
+                $refresh_token->expires_in = $rt_validity->timestamp;
+                $refresh_token->ip = $request->ip();
+                $refresh_token->user_agent = $request->userAgent();
+                $refresh_token->request_session_id = $session->session_id;
+                $refresh_token->save();
+
+                $access_token = new Token();
+                $access_token->type = 'access_token';
+                $access_token->user_id = $auth_code_record->user_id;
+                $access_token->client_id = $auth_code_record->client_id;
+                $access_token->for = $client->redirect_uri;
+                $access_token->token = $accessTokenNew;
+                $access_token->scopes = $auth_code_record->scopes;
+                $access_token->refresh_token_id = $refresh_token->id;
+                $access_token->expires_in = $ac_validity->timestamp;
+                $access_token->ip = $request->ip();
+                $access_token->user_agent = $request->userAgent();
+                $access_token->request_session_id = $session->id;
+                $access_token->save();
+
+                // Revoke the authorization code and user session
+                // $auth_code_record->revoked = true;
+                // $auth_code_record->update();
+
+                // $session->validity = false;
+                // $session->update();
+
+                // UserSession::where('session_id', $auth_code_record->user_session_id)->delete();
+
+                $response = [
+                    'access_token' => $access_token->token,
+                    'token_type' => 'Bearer',
+                    'expires_in' => $access_token->expires_in,
+                    'refresh_token' => $refresh_token->token,
+                    'token_id' => $access_token->id,
+                ];
+
+                //try to decode the access token
+                $decoded_access_token = JWT::decode(
+                    $access_token->token,
+                    new Key("5742168856", 'HS256')
+                );
+
+                Log::info(['decoded_access_token' => $decoded_access_token]);
 
                 // $log->response = json_encode($response);
                 // $log->update();
 
-                return response()->json($response, 400);
-            }
-            //if no code verifier is provided, return error
-            if (!$code_verifier) {
-                $response = [
-                    'error' => 'invalid_grant',
-                    'error_description' => 'code_verifier is required',
+                return response()->json($response, 200);
+                // Return the access token and refresh token
+                // return response()->json();
+            } else if ($grant_type === 'refresh_token') {
+                // Verify the refresh token
+                $refresh_token_value = $request->input('refresh_token');
+
+                $refresh_token_decrypted = JWT::decode(
+                    $refresh_token_value,
+                    new Key($client_secret, 'HS256')
+                );
+
+                if (!$refresh_token_decrypted) {
+                    $response = ['error' => 'invalid_grant'];
+
+                    // $log->response = json_encode($response);
+                    // $log->update();
+
+                    return response()->json($response, 400);
+                }
+
+                $verifyClient = Client::where('client_id', $refresh_token_decrypted->client_id)
+                    ->where('client_secret', $client_secret)
+                    ->first();
+
+                if (!$verifyClient) {
+                    $response = ['error' => 'invalid_grant'];
+
+                    // $log->response = json_encode($response);
+                    // $log->update();
+
+                    return response()->json($response, 400);
+                }
+
+                $now = Carbon::now();
+
+                if ($now->timestamp > $refresh_token_decrypted->expires_in) {
+                    $response = ['error' => 'invalid_grant'];
+
+                    // $log->response = json_encode($response);
+                    // $log->update();
+
+                    return response()->json($response, 400);
+                }
+
+                //check if refresh token is valid
+                $refresh_token = Token::where('token', $refresh_token_value)
+                    ->where('type', 'refresh_token')
+                    ->where('revoked', false)
+                    ->where('expires_in', '>', $now->timestamp)
+                    ->where('client_id', $verifyClient->id)
+                    ->first();
+
+                if (!$refresh_token || $refresh_token->client_id !== $verifyClient->id) {
+                    $response = ['error' => 'invalid_grant'];
+
+                    // $log->response = json_encode($response);
+                    // $log->update();
+
+                    return response()->json($response, 400);
+                }
+
+                $accessToken = Token::where('refresh_token_id', $refresh_token->id)
+                    ->where('type', 'access_token')
+                    ->first();
+
+                if (!$accessToken) {
+                    $response = ['error' => 'invalid_grant'];
+
+                    // $log->response = json_encode($response);
+                    // $log->update();
+
+                    return response()->json($response, 400);
+                }
+
+                //client private key
+                $privateKeyEncrypted = $verifyClient->privateKey_path;
+                $client_secret = $verifyClient->client_secret;
+
+                $ac_validity = now()->addMinutes($client->access_token_ttl);
+                $rt_validity = now()->addMinutes($client->refresh_token_ttl);
+
+                $payloadAccess = [
+                    'client_id' => $client->client_id,
+                    'scopes' => $refresh_token->scopes,
+                    'expires_in' => $ac_validity->timestamp,
+                    'user_id' => $refresh_token->user_id,
                 ];
 
-                // $log->response = json_encode($response);
-                // $log->update();
-
-                return response()->json($response, 400);
-            }
-
-            // Verify the authorization code
-            $auth_code = urldecode($request->input('code'));
-
-            $auth_code_decrypted = $auth_model->decrypt($auth_code, $client_secret);
-
-            $auth_code_record = AuthCode::where('auth_code', $auth_code)
-                ->where('client_id', $client->id)
-                ->where('expires_at', '>', now())
-                ->first();
-
-            if (!$auth_code_record) {
-                return response()->json([
-                    'error' => 'invalid_grant',
-                    'error_description' => 'The authorization code is invalid',
-                ], 400);
-            }
-
-            //check if code verifier matches the code challenge
-            $code_challenge = $auth_code_record->code_challenge;
-
-            //new check if the code verifier matches the code challenge
-            if (!$auth_model->verifyCodeChallenge($code_challenge, $code_verifier)) {
-                return response()->json([
-                    'status_message' => 'invalid_grant',
-                    'status_description' => 'code_verifier does not match code_challenge',
-                ], 400);
-            }
-
-            //check if the auth code matches the client session id + redirect uri + scopes + expires at + auth code + state
-            $auth_code_details = AuthCode::where('auth_code', urlencode($auth_code))
-                ->where('client_id', $client->id)
-                ->where('session_id', $auth_code_record->session_id)
-                ->where('scopes', $auth_code_record->scopes)
-                ->where('user_id', $auth_code_record->user_id)
-                ->where('expires_at', '>', now())
-                ->first();
-
-            if (!$auth_code_details) {
-                $response = [
-                    'error' => 'invalid_grant',
-                    'error_description' => 'The authorization code is invalid',
+                $payloadRefresh = [
+                    'client_id' => $client->client_id,
+                    'scopes' => $refresh_token->scopes,
+                    'expires_in' => $rt_validity->timestamp,
+                    'user_id' => $refresh_token->user_id,
                 ];
 
-                // $log->response = json_encode($response);
-                // $log->update();
+                $privateKey = openssl_pkey_get_private($privateKeyEncrypted, $client_secret);
+                $accessTokenNew = JWT::encode($payloadAccess, $privateKey, 'RS256', $client->id, [
+                    'alg' => 'RS256',
+                    'kid' => $client->id,
+                    'sub' => $client->client_id,
+                    'jti' => $refresh_token->user_id,
+                    'exp' => $ac_validity->timestamp,
+                ]);
+                $refreshTokenNew = JWT::encode($payloadRefresh, $privateKey, 'RS256', $client->id, [
+                    'alg' => 'RS256',
+                    'kid' => $client->id,
+                    'sub' => $client->client_id,
+                    'jti' => $refresh_token->user_id,
+                    'exp' => $rt_validity->timestamp,
+                ]);
 
-                return response()->json($response, 400);
+                $new_refresh_token = new Token();
+                $new_refresh_token->type = 'refresh_token';
+                $new_refresh_token->user_id = $refresh_token->user_id;
+                $new_refresh_token->client_id = $refresh_token->client_id;
+                $new_refresh_token->for = $verifyClient->redirect_uri;
+                $new_refresh_token->token = $refreshTokenNew;
+                $new_refresh_token->scopes = $refresh_token->scopes;
+                $new_refresh_token->expires_in = $rt_validity->timestamp;
+                $new_refresh_token->ip = $request->ip();
+                $new_refresh_token->user_agent = $request->userAgent();
+                $new_refresh_token->request_session_id = $auth_code_decrypted->request_session_id;
+                $new_refresh_token->save();
+
+                $new_access_token = new OauthToken();
+                $new_access_token->type = 'access_token';
+                $new_access_token->user_id = $new_refresh_token->user_id;
+                $new_access_token->client_id = $new_refresh_token->client_id;
+                $new_access_token->for = $verifyClient->redirect_uri;
+                $new_access_token->token = $accessTokenNew;
+                $new_access_token->scopes = $new_refresh_token->scopes;
+                $new_access_token->refresh_token_id = $new_refresh_token->id;
+                $new_access_token->expires_in = $ac_validity->timestamp;
+                $new_access_token->ip = $request->ip();
+                $new_access_token->user_agent = $request->userAgent();
+                $new_access_token->request_session_id = $auth_code_decrypted->request_session_id;
+                $new_access_token->save();
+
+                OauthToken::where('id', $accessToken->id)
+                    ->update(['revoked' => true]);
+
+                OauthToken::where('id', $refresh_token->id)
+                    ->update(['revoked' => true]);
+
+                $response = [
+                    'access_token' => $new_access_token->token,
+                    'token_type' => 'Bearer',
+                    'expires_in' => $ac_validity->timestamp,
+                    'refresh_token' => $new_refresh_token->token,
+                    'token_id' => $auth_code_decrypted->request_session_id,
+                ];
+
+                $log->response = json_encode($response);
+                $log->update();
+
+                return response()->json($response, 200);
             }
-
-            $ac_validity = now()->addMinutes($client->access_token_ttl);
-            $rt_validity = now()->addMinutes($client->refresh_token_ttl);
-
-            //client private key
-            $privateKeyEncrypted = $client->privateKey_path;
-            $client_secret = $client->client_secret;
-
-            $access_payload = [
-                'client_id' => $client->client_id,
-                'scopes' => $auth_code_record->scopes,
-                'expires_in' => $ac_validity->timestamp,
-                'user_id' => $auth_code_record->user_id,
-            ];
-
-            $refresh_payload = [
-                'client_id' => $client->client_id,
-                'scopes' => $auth_code_record->scopes,
-                'expires_in' => $rt_validity->timestamp,
-                'user_id' => $auth_code_record->user_id,
-            ];
-
-            $privateKey = openssl_pkey_get_private($privateKeyEncrypted, $client_secret);
-            $accessTokenNew = JWT::encode($access_payload, $privateKey, 'RS256', $client->id, [
-                'alg' => 'RS256',
-                'kid' => $client->id,
-                'sub' => $client->client_id,
-                'jti' => $auth_code_decrypted->user_id,
-                'exp' => $ac_validity->timestamp,
-            ]);
-            $refreshTokenNew = JWT::encode($refresh_payload, $privateKey, 'RS256', $client->id, [
-                'alg' => 'RS256',
-                'kid' => $client->id,
-                'sub' => $client->client_id,
-                'jti' => $auth_code_decrypted->user_id,
-                'exp' => $rt_validity->timestamp,
-            ]);
-
-            //accessToken and refreshToken
-            $refresh_token = new OauthToken();
-            $refresh_token->type = 'refresh_token';
-            $refresh_token->user_id = $auth_code_record->user_id;
-            $refresh_token->client_id = $auth_code_record->client_id;
-            $refresh_token->for = $client->redirect_uri;
-            $refresh_token->token = $refreshTokenNew;
-            $refresh_token->scopes = $auth_code_record->scopes;
-            $refresh_token->expires_in = $rt_validity->timestamp;
-            $refresh_token->ip = $request->ip();
-            $refresh_token->user_agent = $request->userAgent();
-            $refresh_token->request_session_id = $auth_code_decrypted->user_session_id;
-            $refresh_token->save();
-
-            $access_token = new OauthToken();
-            $access_token->type = 'access_token';
-            $access_token->user_id = $auth_code_record->user_id;
-            $access_token->client_id = $auth_code_record->client_id;
-            $access_token->for = $client->redirect_uri;
-            $access_token->token = $accessTokenNew;
-            $access_token->scopes = $auth_code_record->scopes;
-            $access_token->refresh_token_id = $refresh_token->id;
-            $access_token->expires_in = $ac_validity->timestamp;
-            $access_token->ip = $request->ip();
-            $access_token->user_agent = $request->userAgent();
-            $access_token->request_session_id = $auth_code_decrypted->user_session_id;
-            $access_token->save();
-
-            // Revoke the authorization code and user session
-            $auth_code_record->delete();
-            UserSession::where('session_id', $auth_code_record->user_session_id)->delete();
+        } catch (\Exception $e) {
+            Log::info(['Error' => $e->getMessage()]);
 
             $response = [
-                'access_token' => $access_token->token,
-                'token_type' => 'Bearer',
-                'expires_in' => $access_token->expires_in,
-                'refresh_token' => $refresh_token->token,
-                'token_id' => $auth_code_decrypted->request_session_id,
+                'error' => 'invalid_grant',
+                'error_description' => 'The authorization code is invalid',
             ];
 
-            $log->response = json_encode($response);
-            $log->update();
-
-            return response()->json($response, 200);
-            // Return the access token and refresh token
-            // return response()->json();
-        } else if ($grant_type === 'refresh_token') {
-            // Verify the refresh token
-            $refresh_token_value = $request->input('refresh_token');
-            $public_key = $client->publicKey_path;
-
-            $refresh_token_decrypted = JWT::decode($refresh_token_value, new Key($public_key, 'RS256'));
-
-            if (!$refresh_token_decrypted) {
-                $response = ['error' => 'invalid_grant'];
-
-                $log->response = json_encode($response);
-                $log->update();
-
-                return response()->json($response, 400);
-            }
-
-            $verifyClient = Client::where('client_id', $refresh_token_decrypted->client_id)
-                ->where('client_secret', $client_secret)
-                ->first();
-
-            if (!$verifyClient) {
-                $response = ['error' => 'invalid_grant'];
-
-                $log->response = json_encode($response);
-                $log->update();
-
-                return response()->json($response, 400);
-            }
-
-            $now = Carbon::now();
-
-            if ($now->timestamp > $refresh_token_decrypted->expires_in) {
-                $response = ['error' => 'invalid_grant'];
-
-                $log->response = json_encode($response);
-                $log->update();
-
-                return response()->json($response, 400);
-            }
-
-            //check if refresh token is valid
-            $refresh_token = OauthToken::where('token', $refresh_token_value)
-                ->where('type', 'refresh_token')
-                ->where('revoked', false)
-                ->where('expires_in', '>', $now->timestamp)
-                ->where('client_id', $verifyClient->id)
-                ->first();
-
-            if (!$refresh_token || $refresh_token->client_id !== $verifyClient->id) {
-                $response = ['error' => 'invalid_grant'];
-
-                $log->response = json_encode($response);
-                $log->update();
-
-                return response()->json($response, 400);
-            }
-
-            $accessToken = OauthToken::where('refresh_token_id', $refresh_token->id)
-                ->where('type', 'access_token')
-                ->first();
-
-            if (!$accessToken) {
-                $response = ['error' => 'invalid_grant'];
-
-                $log->response = json_encode($response);
-                $log->update();
-
-                return response()->json($response, 400);
-            }
-
-            //client private key
-            $privateKeyEncrypted = $verifyClient->privateKey_path;
-            $client_secret = $verifyClient->client_secret;
-
-            $ac_validity = now()->addMinutes($client->access_token_ttl);
-            $rt_validity = now()->addMinutes($client->refresh_token_ttl);
-
-            $payloadAccess = [
-                'client_id' => $client->client_id,
-                'scopes' => $refresh_token->scopes,
-                'expires_in' => $ac_validity->timestamp,
-                'user_id' => $refresh_token->user_id,
-            ];
-
-            $payloadRefresh = [
-                'client_id' => $client->client_id,
-                'scopes' => $refresh_token->scopes,
-                'expires_in' => $rt_validity->timestamp,
-                'user_id' => $refresh_token->user_id,
-            ];
-
-            $privateKey = openssl_pkey_get_private($privateKeyEncrypted, $client_secret);
-            $accessTokenNew = JWT::encode($payloadAccess, $privateKey, 'RS256', $client->id, [
-                'alg' => 'RS256',
-                'kid' => $client->id,
-                'sub' => $client->client_id,
-                'jti' => $refresh_token->user_id,
-                'exp' => $ac_validity->timestamp,
-            ]);
-            $refreshTokenNew = JWT::encode($payloadRefresh, $privateKey, 'RS256', $client->id, [
-                'alg' => 'RS256',
-                'kid' => $client->id,
-                'sub' => $client->client_id,
-                'jti' => $refresh_token->user_id,
-                'exp' => $rt_validity->timestamp,
-            ]);
-
-            $new_refresh_token = new OauthToken();
-            $new_refresh_token->type = 'refresh_token';
-            $new_refresh_token->user_id = $refresh_token->user_id;
-            $new_refresh_token->client_id = $refresh_token->client_id;
-            $new_refresh_token->for = $verifyClient->redirect_uri;
-            $new_refresh_token->token = $refreshTokenNew;
-            $new_refresh_token->scopes = $refresh_token->scopes;
-            $new_refresh_token->expires_in = $rt_validity->timestamp;
-            $new_refresh_token->ip = $request->ip();
-            $new_refresh_token->user_agent = $request->userAgent();
-            $new_refresh_token->request_session_id = $auth_code_decrypted->request_session_id;
-            $new_refresh_token->save();
-
-            $new_access_token = new OauthToken();
-            $new_access_token->type = 'access_token';
-            $new_access_token->user_id = $new_refresh_token->user_id;
-            $new_access_token->client_id = $new_refresh_token->client_id;
-            $new_access_token->for = $verifyClient->redirect_uri;
-            $new_access_token->token = $accessTokenNew;
-            $new_access_token->scopes = $new_refresh_token->scopes;
-            $new_access_token->refresh_token_id = $new_refresh_token->id;
-            $new_access_token->expires_in = $ac_validity->timestamp;
-            $new_access_token->ip = $request->ip();
-            $new_access_token->user_agent = $request->userAgent();
-            $new_access_token->request_session_id = $auth_code_decrypted->request_session_id;
-            $new_access_token->save();
-
-            OauthToken::where('id', $accessToken->id)
-                ->update(['revoked' => true]);
-
-            OauthToken::where('id', $refresh_token->id)
-                ->update(['revoked' => true]);
-
-            $response = [
-                'access_token' => $new_access_token->token,
-                'token_type' => 'Bearer',
-                'expires_in' => $ac_validity->timestamp,
-                'refresh_token' => $new_refresh_token->token,
-                'token_id' => $auth_code_decrypted->request_session_id,
-            ];
-
-            $log->response = json_encode($response);
-            $log->update();
-
-            return response()->json($response, 200);
+            return response()->json($response, 400);
         }
 
         // Invalid grant type

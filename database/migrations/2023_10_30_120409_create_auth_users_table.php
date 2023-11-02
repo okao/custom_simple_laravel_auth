@@ -23,6 +23,8 @@ return new class extends Migration
             $table->boolean('is_blocked')->default(false);
             $table->timestamp('blocked_at')->nullable();
 
+            //imal data as text
+            $table->text('imal_data')->nullable();
 
             $table->timestamps();
         });

@@ -3,7 +3,11 @@
 use App\Http\Controllers\AuthController;
 use App\Models\AuthCode;
 use App\Models\AuthModel;
+use App\Models\AuthRequest;
+use App\Models\Client;
+use App\Models\Session;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -62,6 +66,10 @@ Route::group(['middleware' => []], function () {
         print_r($all_params);
         echo "</pre>";
 
+        //get the auth code
+        Log::info('Auth code Raw: ' . $all_params['code']);
+        Log::info('Auth code: ' . urldecode($all_params['code']));
+
         $code = urldecode($all_params['code']);
 
         //get the auth code from the db
@@ -97,21 +105,46 @@ Route::group(['middleware' => []], function () {
 
         $client_id = $auth_code->client_id;
 
-        //get the client secret
-        $client = \App\Models\Client::where('client_id', $client_id)->first();
-        $client_secret = $client->secret;
+        //get the client secret with like
+        $client = Client::find($client_id);
+        $client_secret = $client->client_secret;
 
         //try to decode the code
         $auth_model = new AuthModel();
-        $urldecoded_code = urldecode($code);
-        $decoded_code = $auth_model->decrypt($code, $client_secret);
+        $decoded_code = $auth_model->encrypt_decrypt(
+            'decrypt', $all_params['code'], $client_secret,
+            env('APP_KEY')
+        );
+        $decoded_code = json_decode($decoded_code);
+
+        // Log::info('Decoded code: ' . $decoded_code);
+        Log::info('Secret: ' . $client_secret);
 
         echo "<pre>";
         print_r($decoded_code);
         echo "</pre>";
         //display the decoded code
 
+        //get session data
+        $session_data = Session::find($auth_code->session_id);
+
+        echo "<pre>";
+        print_r($session_data->toArray());
+        echo "</pre>";
+
+        // get AuthRequest data
+        $auth_request = AuthRequest::find($decoded_code->request_id);
+
+        echo "<pre>";
+        print_r($auth_request->toArray());
+        echo "</pre>";
+
         echo exit();
 
     });
+});
+
+//token
+Route::group(['middleware' => []], function () {
+    Route::post('/token', [AuthController::class, 'token'])->name('token');
 });

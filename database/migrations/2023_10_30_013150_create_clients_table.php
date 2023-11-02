@@ -12,6 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('clients', function (Blueprint $table) {
+            $table->id();
             $table->string('name');
             $table->string('email')->nullable();
             $table->string('logo')->nullable();
@@ -30,19 +31,17 @@ return new class extends Migration
             $table->text('publicKey_path')->nullable();
 
             //all oauth config options are here
-            $table->unsignedInteger('auth_code_ttl')->default(5);         //authorization code ttl in minutes
-            $table->unsignedInteger('access_token_ttl')->default(10);     //access token ttl in minutes
-            $table->unsignedInteger('refresh_token_ttl')->default(1440);  //refresh token ttl in minutes
-            $table->unsignedInteger('max_attempts')->default(5);          //max attempts to login before lockout
-            $table->unsignedInteger('lockout_ttl')->default(60);          //lockout time in minutes after max attempts
-            $table->boolean('allow_skip_permission')->default(false);     //if false, user must have permission to access client
-            $table->boolean('allow_multiple_tokens')->default(false);     //if false, only one token per user per client
-            $table->boolean('allow_refresh_token')->default(true);        //if false, refresh token will not be issued
+            $table->unsignedInteger('auth_code_ttl')->default(5); //authorization code ttl in minutes
+            $table->unsignedInteger('access_token_ttl')->default(10); //access token ttl in minutes
+            $table->unsignedInteger('refresh_token_ttl')->default(1440); //refresh token ttl in minutes
+            $table->unsignedInteger('max_attempts')->default(5); //max attempts to login before lockout
+            $table->unsignedInteger('lockout_ttl')->default(60); //lockout time in minutes after max attempts
+            $table->boolean('allow_skip_permission')->default(false); //if false, user must have permission to access client
+            $table->boolean('allow_multiple_tokens')->default(false); //if false, only one token per user per client
+            $table->boolean('allow_refresh_token')->default(true); //if false, refresh token will not be issued
 
-
-            $table->boolean('skip_pkce')->default(false);                 //if true, pkce will not be required
-            $table->unsignedInteger('rate_limit')->default(15);            //max requests per minute, 15 is default for oauth clients (not users)
-
+            $table->boolean('skip_pkce')->default(false); //if true, pkce will not be required
+            $table->unsignedInteger('rate_limit')->default(15); //max requests per minute, 15 is default for oauth clients (not users)
 
             $table->timestamps();
         });
